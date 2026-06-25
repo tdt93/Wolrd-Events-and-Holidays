@@ -1,0 +1,35 @@
+{
+  "name": "wolrd-events-and-holidays",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "node server/index.js",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/geojson": "^7946.0.16",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "~6.0.2",
+    "vite": "^6.3.5"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.3.4",
+    "@deck.gl/layers": "^9.3.4",
+    "@deck.gl/mapbox": "^9.3.4",
+    "@turf/bbox": "^7.3.5",
+    "@turf/centroid": "^7.3.5",
+    "@turf/simplify": "^7.3.5",
+    "express": "^5.2.1",
+    "i18n-iso-countries": "^7.14.0",
+    "maplibre-gl": "^5.24.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "supercluster": "^8.0.1"
+  }
+}
