@@ -1,3 +1,5 @@
+import type { MapEvent } from "../types/event";
+
 const geoCache = new Map<string, [number, number]>();
 
 const CAPITALS: Record<string, [number, number]> = {
@@ -112,6 +114,9 @@ function humanizeRegion(region: string, countryCode: string): string {
   return region;
 }
 
+const BULK_GEOCODE_THRESHOLD = 25;
+const NOMINATIM_TIMEOUT_MS = 5000;
+
 async function nominatimSearch(
   query: string,
   countryCode: string,
@@ -125,7 +130,9 @@ async function nominatimSearch(
       q: query,
       countryCode: countryCode.toLowerCase(),
     });
-    const res = await fetch(`/api/geocode/search?${params}`);
+    const res = await fetch(`/api/geocode/search?${params}`, {
+      signal: AbortSignal.timeout(NOMINATIM_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     const data = (await res.json()) as { lat: string; lon: string }[];
     if (!data[0]) return null;
@@ -138,6 +145,99 @@ async function nominatimSearch(
   } catch {
     return null;
   }
+}
+
+function fastPlaceEvents(
+  events: MapEvent[],
+  countryCode: string,
+  fallback: [number, number],
+): MapEvent[] {
+  const base = CAPITALS[countryCode] ?? fallback;
+  const cityBases = new Map<string, [number, number]>();
+  let cityIdx = 0;
+
+  return events.map((e, i) => {
+    if (e.lat != null && e.lng != null) return e;
+
+    let coords: [number, number];
+    if (e.city) {
+      let cityBase = cityBases.get(e.city);
+      if (!cityBase) {
+        cityBase = jitter(base, cityIdx);
+        cityBases.set(e.city, cityBase);
+        cityIdx += 1;
+      }
+      coords = jitter(cityBase, i);
+    } else {
+      coords = jitter(base, i);
+    }
+
+    const [lng, lat] = coords;
+    return { ...e, lng, lat };
+  });
+}
+
+export async function placeEventsOnMap(
+  events: MapEvent[],
+  countryCode: string,
+  countryName: string | undefined,
+  fallback: [number, number],
+): Promise<MapEvent[]> {
+  if (events.length >= BULK_GEOCODE_THRESHOLD) {
+    return fastPlaceEvents(events, countryCode, fallback);
+  }
+
+  const needsPlacement = events.filter(
+    (e) => e.lat == null || e.lng == null,
+  );
+  const cityCache = new Map<string, [number, number]>();
+  const uniqueCities = [
+    ...new Set(
+      needsPlacement.map((e) => e.city).filter((c): c is string => Boolean(c)),
+    ),
+  ];
+
+  let throttle = 0;
+  for (const city of uniqueCities) {
+    const coords = await nominatimSearch(
+      `${city}, ${countryName ?? countryCode}`,
+      countryCode,
+    );
+    if (coords) cityCache.set(city, coords);
+    throttle += 1;
+    if (throttle % 3 === 0) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  const placed: MapEvent[] = [];
+  let i = 0;
+  for (const e of events) {
+    if (e.lat != null && e.lng != null) {
+      placed.push(e);
+      continue;
+    }
+
+    let base: [number, number] | null = null;
+    if (e.city && cityCache.has(e.city)) {
+      base = cityCache.get(e.city)!;
+    } else if (e.region) {
+      const regionLabel = humanizeRegion(e.region, countryCode);
+      base = await nominatimSearch(
+        `${regionLabel}, ${countryName ?? countryCode}`,
+        countryCode,
+      );
+    }
+
+    if (!base) {
+      base = CAPITALS[countryCode] ?? fallback;
+    }
+
+    const [lng, lat] = jitter(base, i);
+    placed.push({ ...e, lng, lat });
+    i += 1;
+  }
+  return placed;
 }
 
 export async function resolveEventCoords(

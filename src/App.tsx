@@ -111,6 +111,8 @@ export default function App() {
 
   const { events: ticketEvents } = useTicketmasterEvents({
     countryCode: selected?.code ?? null,
+    countryName: selectedDisplayName,
+    centroid: selected?.centroid,
     categories: selectedEventCats,
     from: eventRangeFrom,
     to: eventRangeTo,

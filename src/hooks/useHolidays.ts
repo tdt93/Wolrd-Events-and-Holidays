@@ -5,49 +5,13 @@ import {
   getCountryCentroid,
   nagerToMapEvents,
 } from "../lib/geocode";
-import { resolveEventCoords } from "../lib/geocodePlaces";
+import { placeEventsOnMap } from "../lib/geocodePlaces";
 
 interface UseHolidaysOptions {
   countryCode: string | null;
   countryName?: string | null;
   year: number;
   centroid?: [number, number];
-}
-
-async function placeEventsOnMap(
-  events: MapEvent[],
-  countryCode: string,
-  countryName: string | undefined,
-  fallback: [number, number],
-): Promise<MapEvent[]> {
-  const placed: MapEvent[] = [];
-  let i = 0;
-  for (const e of events) {
-    if (
-      (e.source === "ticketmaster" ||
-        e.source === "eventbrite" ||
-        e.source === "seatgeek") &&
-      e.lat != null &&
-      e.lng != null
-    ) {
-      placed.push(e);
-      continue;
-    }
-    const [lng, lat] = await resolveEventCoords(
-      countryCode,
-      countryName,
-      e.region,
-      e.city,
-      fallback,
-      i,
-    );
-    placed.push({ ...e, lng, lat });
-    i += 1;
-    if (i % 3 === 0) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-  return placed;
 }
 
 export function useHolidays({

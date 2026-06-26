@@ -29,7 +29,7 @@ function loadEnvFile() {
     ) {
       value = value.slice(1, -1);
     }
-    if (process.env[key] === undefined) {
+    if (process.env[key] !== value) {
       process.env[key] = value;
     }
   }
@@ -377,23 +377,39 @@ async function fetchEventbritePage(token, countryCode, page, categoryId) {
   });
   if (categoryId) params.set("categories", categoryId);
 
-  const res = await fetch(
-    `https://www.eventbriteapi.com/v3/events/search/?${params}`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    },
-  );
-  if (!res.ok) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(
+      `https://www.eventbriteapi.com/v3/events/search/?${params}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      },
+    );
+    if (!res.ok) {
+      if (!eventbriteSearchWarned) {
+        console.warn(
+          `Eventbrite search returned HTTP ${res.status}. Public event search was discontinued in 2020 — add SEATGEEK_CLIENT_ID or TICKETMASTER_API_KEY for ticketed events.`,
+        );
+        eventbriteSearchWarned = true;
+      }
+      return [];
+    }
+    const body = await res.json();
+    return (body.events ?? []).map((e) => mapEventbriteEvent(e, countryCode));
+  } catch (err) {
     if (!eventbriteSearchWarned) {
       console.warn(
-        `Eventbrite search returned HTTP ${res.status}. Public event search was discontinued in 2020 — add SEATGEEK_CLIENT_ID or TICKETMASTER_API_KEY for ticketed events.`,
+        "Eventbrite search unavailable (deprecated API). Skipping.",
+        err instanceof Error ? err.message : err,
       );
       eventbriteSearchWarned = true;
     }
     return [];
+  } finally {
+    clearTimeout(timeout);
   }
-  const body = await res.json();
-  return (body.events ?? []).map((e) => mapEventbriteEvent(e, countryCode));
 }
 
 async function fetchAllEventbrite(token, countryCode, categories) {
@@ -756,7 +772,7 @@ app.get("/api/events/:countryCode", async (req, res) => {
     .join("+");
 
   try {
-    const cacheKey = `events-v6-${countryCode}-${categories.join("-")}-${from}-${to}-${sourceTag}`;
+    const cacheKey = `events-v7-${countryCode}-${categories.join("-")}-${from}-${to}-${sourceTag}`;
     const cached = getCached(cacheKey);
     if (cached) {
       res.json(cached);
@@ -811,6 +827,23 @@ app.get("/api/events/:countryCode", async (req, res) => {
     console.error(err);
     res.json([]);
   }
+});
+
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    sources: {
+      calendarific: Boolean(process.env.CALENDARIFIC_API_KEY),
+      ticketmaster: Boolean(process.env.TICKETMASTER_API_KEY),
+      seatgeek: Boolean(process.env.SEATGEEK_CLIENT_ID),
+      eventbrite: Boolean(process.env.EVENTBRITE_API_KEY),
+      apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
+    },
+    apiFootballSeasons: {
+      min: Number(process.env.API_FOOTBALL_MIN_SEASON) || 2022,
+      max: Number(process.env.API_FOOTBALL_MAX_SEASON) || 2024,
+    },
+  });
 });
 
 app.get("/api/geocode/search", async (req, res) => {
