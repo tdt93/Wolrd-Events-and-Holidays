@@ -43,6 +43,75 @@ const CAPITALS: Record<string, [number, number]> = {
   MY: [101.6869, 3.139],
 };
 
+const US_STATE_NAMES: Record<string, string> = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+  DC: "District of Columbia",
+};
+
+function humanizeRegion(region: string, countryCode: string): string {
+  const cc = countryCode.toUpperCase();
+  const usMatch = region.match(/^US-([A-Z]{2})$/i);
+  if (cc === "US" && usMatch) {
+    return US_STATE_NAMES[usMatch[1].toUpperCase()] ?? region;
+  }
+
+  const isoMatch = region.match(/^[A-Z]{2}-(.+)$/i);
+  if (isoMatch) {
+    return isoMatch[1].replace(/_/g, " ");
+  }
+
+  return region;
+}
+
 async function nominatimSearch(
   query: string,
   countryCode: string,
@@ -54,14 +123,9 @@ async function nominatimSearch(
   try {
     const params = new URLSearchParams({
       q: query,
-      countrycodes: countryCode.toLowerCase(),
-      format: "json",
-      limit: "1",
+      countryCode: countryCode.toLowerCase(),
     });
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?${params}`,
-      { headers: { "Accept-Language": "en", "User-Agent": "SunnyAtlas/1.0" } },
-    );
+    const res = await fetch(`/api/geocode/search?${params}`);
     if (!res.ok) return null;
     const data = (await res.json()) as { lat: string; lon: string }[];
     if (!data[0]) return null;
@@ -91,8 +155,9 @@ export async function resolveEventCoords(
   }
 
   if (region) {
+    const regionLabel = humanizeRegion(region, countryCode);
     const coords = await nominatimSearch(
-      `${region}, ${countryName ?? countryCode}`,
+      `${regionLabel}, ${countryName ?? countryCode}`,
       countryCode,
     );
     if (coords) return jitter(coords, index);

@@ -3,7 +3,7 @@ import { getPrimaryHolidayType } from "./categories";
 import type { HolidayType } from "../types/event";
 
 const HOLIDAY_ICONS: Record<HolidayType, string> = {
-  Public: "☂️",
+  Public: "🎉",
   Bank: "🏦",
   School: "📚",
   Observance: "🎭",
@@ -12,7 +12,7 @@ const HOLIDAY_ICONS: Record<HolidayType, string> = {
 };
 
 const EVENT_ICONS: Record<string, string> = {
-  holiday: "☂️",
+  holiday: "🎉",
   festival: "🎪",
   sports: "⚽",
   music: "🎵",

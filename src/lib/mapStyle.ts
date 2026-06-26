@@ -1,6 +1,10 @@
 import type { StyleSpecification } from "maplibre-gl";
 
-/** Flat color basemap — no terrain or satellite texture */
+export const OCEAN_COLOR = "#7dd3fc";
+export const PAGE_BG_COLOR = "#e0f2fe";
+export const LAND_FILL_COLOR = "#f1f5f9";
+
+/** Flat color basemap — ocean only; land comes from country GeoJSON layers */
 export const MINIMAL_MAP_STYLE: StyleSpecification = {
   version: 8,
   name: "Sunny Atlas Flat",
@@ -11,11 +15,10 @@ export const MINIMAL_MAP_STYLE: StyleSpecification = {
       id: "background",
       type: "background",
       paint: {
-        "background-color": "#bfdbfe",
+        "background-color": OCEAN_COLOR,
       },
     },
   ],
 };
 
-export const LAND_FILL_COLOR = "#f1f5f9";
 export const LAND_LINE_COLOR = "#94a3b8";

@@ -23,7 +23,13 @@ async function placeEventsOnMap(
   const placed: MapEvent[] = [];
   let i = 0;
   for (const e of events) {
-    if (e.source === "ticketmaster" && e.lat != null && e.lng != null) {
+    if (
+      (e.source === "ticketmaster" ||
+        e.source === "eventbrite" ||
+        e.source === "seatgeek") &&
+      e.lat != null &&
+      e.lng != null
+    ) {
       placed.push(e);
       continue;
     }
@@ -121,10 +127,7 @@ export function useCountryHeatmap(
   const [counts, setCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    if (!enabled) {
-      setCounts({});
-      return;
-    }
+    if (!enabled) return;
 
     let cancelled = false;
     fetch(`/api/holidays/heatmap?year=${year}&from=${from}&to=${to}`)

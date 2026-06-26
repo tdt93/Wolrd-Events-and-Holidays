@@ -15,7 +15,13 @@ export type EventCategory =
   | "community"
   | "other";
 
-export type EventSource = "nager" | "calendarific" | "ticketmaster";
+export type EventSource =
+  | "nager"
+  | "calendarific"
+  | "ticketmaster"
+  | "eventbrite"
+  | "seatgeek"
+  | "api-football";
 
 export interface NagerHoliday {
   date: string;
@@ -25,6 +31,7 @@ export interface NagerHoliday {
   global: boolean;
   counties: string[] | null;
   types: HolidayType[];
+  source?: "nager" | "calendarific";
 }
 
 export interface MapEvent {
@@ -47,6 +54,7 @@ export interface MapEvent {
   isGlobal?: boolean;
   isLongWeekend?: boolean;
   region?: string;
+  countryName?: string;
 }
 
 export interface CountryMeta {
@@ -73,6 +81,7 @@ export interface AppUrlState {
   from?: string;
   to?: string;
   cat?: string[];
+  ecat?: EventCategory[];
   globe?: boolean;
   nationalOnly?: boolean;
 }

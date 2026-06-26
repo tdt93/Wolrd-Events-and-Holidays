@@ -1,4 +1,44 @@
+import { createRequire } from "node:module";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
+import countries from "i18n-iso-countries";
+
+const require = createRequire(import.meta.url);
+const en = require("i18n-iso-countries/langs/en.json");
+
+countries.registerLocale(en);
+
+function loadEnvFile() {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const envPath = resolve(root, ".env");
+  if (!existsSync(envPath)) return;
+
+  const text = readFileSync(envPath, "utf8");
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadEnvFile();
+
+import { searchGeocode, reverseGeocode } from "./geocodeProxy.js";
+import { fetchAllApiFootball } from "./apiFootball.js";
 
 const app = express();
 const PORT = Number(process.env.API_PORT || 3000);
@@ -16,8 +56,8 @@ function getCached(key) {
   return entry.data;
 }
 
-function setCache(key, data) {
-  cache.set(key, { data, expires: Date.now() + CACHE_TTL_MS });
+function setCache(key, data, ttlMs = CACHE_TTL_MS) {
+  cache.set(key, { data, expires: Date.now() + ttlMs });
 }
 
 async function fetchNager(path) {
@@ -69,6 +109,7 @@ function mapTicketmasterEvent(event, countryCode) {
     startDate: dates?.start?.localDate ?? "",
     category,
     countryCode,
+    countryName: countries.getName(countryCode, "en"),
     city,
     region,
     venue: venueName,
@@ -84,6 +125,439 @@ function mapTicketmasterEvent(event, countryCode) {
       : undefined,
     url: event.url ?? undefined,
   };
+}
+
+function iso3FromIso2(iso2) {
+  return countries.alpha2ToAlpha3(iso2.toUpperCase());
+}
+
+async function fetchGeoBoundaryGeoJSON(iso3, admLevel) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const metaRes = await fetch(
+      `https://www.geoboundaries.org/api/current/gbOpen/${iso3}/${admLevel}/`,
+      { signal: controller.signal },
+    );
+    if (!metaRes.ok) {
+      return { type: "FeatureCollection", features: [] };
+    }
+    const meta = await metaRes.json();
+    const entry = Array.isArray(meta)
+      ? (meta.find((m) => m.gjDownloadURL) ?? meta[0])
+      : null;
+    if (!entry?.gjDownloadURL) {
+      return { type: "FeatureCollection", features: [] };
+    }
+    const geoRes = await fetch(entry.gjDownloadURL, {
+      signal: controller.signal,
+    });
+    if (!geoRes.ok) {
+      return { type: "FeatureCollection", features: [] };
+    }
+    return geoRes.json();
+  } catch (err) {
+    console.warn(`geoBoundaries ${iso3}/${admLevel}:`, err.message);
+    return { type: "FeatureCollection", features: [] };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function enrichBoundaryFeatures(geo) {
+  return (geo.features ?? []).map((f) => ({
+    ...f,
+    properties: {
+      ...(f.properties ?? {}),
+      name:
+        f.properties?.shapeName ??
+        f.properties?.name ??
+        f.properties?.NAME ??
+        "Area",
+    },
+  }));
+}
+
+async function fetchTicketmasterPage(apiKey, countryCode, page, classification) {
+  const params = new URLSearchParams({
+    apikey: apiKey,
+    countryCode,
+    size: "200",
+    page: String(page),
+    sort: "date,asc",
+  });
+  if (classification) params.set("classificationName", classification);
+
+  const url = `https://app.ticketmaster.com/discovery/v2/events.json?${params}`;
+  const tmRes = await fetch(url);
+  if (!tmRes.ok) return [];
+  const body = await tmRes.json();
+  return (body._embedded?.events ?? []).map((e) =>
+    mapTicketmasterEvent(e, countryCode),
+  );
+}
+
+async function fetchAllTicketmaster(apiKey, countryCode, categories) {
+  const segments = new Set();
+  if (categories.length === 0) {
+    segments.add(null);
+  } else {
+    for (const cat of categories) {
+      segments.add(TICKETMASTER_SEGMENT_MAP[cat] ?? null);
+    }
+  }
+
+  const all = [];
+  const seen = new Set();
+
+  for (const classification of segments) {
+    for (let page = 0; page < 4; page += 1) {
+      const batch = await fetchTicketmasterPage(
+        apiKey,
+        countryCode,
+        page,
+        classification,
+      );
+      if (batch.length === 0) break;
+      for (const event of batch) {
+        if (seen.has(event.id)) continue;
+        seen.add(event.id);
+        all.push(event);
+      }
+      if (batch.length < 200) break;
+    }
+  }
+
+  if (categories.length > 0) {
+    return all.filter((e) => categories.includes(e.category));
+  }
+  return all;
+}
+
+const CALENDARIFIC_TYPE_MAP = {
+  "National holiday": ["Public"],
+  "Federal Holiday": ["Public"],
+  "Common local holiday": ["Public"],
+  "Local holiday": ["Public"],
+  "Bank holiday": ["Bank"],
+  "School holiday": ["School"],
+  "Optional holiday": ["Optional"],
+  Observance: ["Observance"],
+  "United nations observance": ["Observance"],
+  Season: ["Observance"],
+  "Clock change": ["Observance"],
+};
+
+function mapCalendarificTypes(types) {
+  const out = new Set();
+  for (const typeName of types ?? []) {
+    for (const mapped of CALENDARIFIC_TYPE_MAP[typeName] ?? ["Observance"]) {
+      out.add(mapped);
+    }
+  }
+  return out.size > 0 ? [...out] : ["Observance"];
+}
+
+function mapCalendarificHoliday(holiday, countryCode) {
+  const states = holiday.states;
+  const locations = holiday.locations;
+  const isGlobal =
+    !states ||
+    states === "All" ||
+    locations === "All" ||
+    (Array.isArray(locations) && locations.includes("All"));
+
+  let counties = null;
+  if (!isGlobal && states && states !== "All") {
+    if (Array.isArray(states)) {
+      counties = states.map(String).filter(Boolean);
+    } else if (typeof states === "string") {
+      counties = states
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return {
+    date: holiday.date.iso,
+    localName: holiday.name,
+    name: holiday.name,
+    countryCode,
+    global: isGlobal,
+    counties,
+    types: mapCalendarificTypes(holiday.type),
+    source: "calendarific",
+  };
+}
+
+async function fetchCalendarific(apiKey, countryCode, year) {
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    country: countryCode,
+    year: String(year),
+  });
+  const res = await fetch(
+    `https://calendarific.com/api/v2/holidays?${params}`,
+  );
+  if (!res.ok) {
+    console.warn(`Calendarific ${countryCode}: HTTP ${res.status}`);
+    return [];
+  }
+  const body = await res.json();
+  if (body.meta?.code !== 200) {
+    console.warn(
+      `Calendarific ${countryCode}:`,
+      body.meta?.error ?? body.meta?.code,
+    );
+    return [];
+  }
+  return (body.response?.holidays ?? []).map((h) =>
+    mapCalendarificHoliday(h, countryCode),
+  );
+}
+
+const EVENTBRITE_CATEGORY_MAP = {
+  music: "103",
+  arts: "105",
+  sports: "108",
+  festival: "110",
+};
+
+function mapEventbriteEvent(event, countryCode) {
+  const venue = event.venue;
+  const categoryId = String(event.category_id ?? "");
+  const title = event.name?.text ?? event.name ?? "Event";
+  const titleLower = title.toLowerCase();
+
+  let category = "other";
+  if (categoryId === "103") category = "music";
+  else if (categoryId === "105") category = "arts";
+  else if (categoryId === "108") category = "sports";
+  else if (categoryId === "110" || titleLower.includes("festival")) {
+    category = "festival";
+  }
+
+  const start = event.start?.local ?? event.start?.utc ?? "";
+  const startDate = start.slice(0, 10);
+  const rawDesc = event.description?.text ?? "";
+  const info = rawDesc
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return {
+    id: `eb-${event.id}`,
+    source: "eventbrite",
+    title,
+    startDate,
+    category,
+    countryCode,
+    countryName: countries.getName(countryCode, "en"),
+    city: venue?.address?.city,
+    region: venue?.address?.region,
+    venue: venue?.name,
+    info: info || undefined,
+    description: info || undefined,
+    lat: venue?.latitude ? parseFloat(venue.latitude) : undefined,
+    lng: venue?.longitude ? parseFloat(venue.longitude) : undefined,
+    url: event.url ?? undefined,
+  };
+}
+
+let eventbriteSearchWarned = false;
+
+async function fetchEventbritePage(token, countryCode, page, categoryId) {
+  const params = new URLSearchParams({
+    "location.country": countryCode,
+    expand: "venue",
+    page_size: "50",
+    page: String(page),
+    sort_by: "date",
+  });
+  if (categoryId) params.set("categories", categoryId);
+
+  const res = await fetch(
+    `https://www.eventbriteapi.com/v3/events/search/?${params}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) {
+    if (!eventbriteSearchWarned) {
+      console.warn(
+        `Eventbrite search returned HTTP ${res.status}. Public event search was discontinued in 2020 — add SEATGEEK_CLIENT_ID or TICKETMASTER_API_KEY for ticketed events.`,
+      );
+      eventbriteSearchWarned = true;
+    }
+    return [];
+  }
+  const body = await res.json();
+  return (body.events ?? []).map((e) => mapEventbriteEvent(e, countryCode));
+}
+
+async function fetchAllEventbrite(token, countryCode, categories) {
+  const categoryIds = new Set();
+  if (categories.length === 0) {
+    categoryIds.add(null);
+  } else {
+    for (const cat of categories) {
+      categoryIds.add(EVENTBRITE_CATEGORY_MAP[cat] ?? null);
+    }
+  }
+
+  const all = [];
+  const seen = new Set();
+
+  for (const categoryId of categoryIds) {
+    for (let page = 1; page <= 4; page += 1) {
+      const batch = await fetchEventbritePage(
+        token,
+        countryCode,
+        page,
+        categoryId,
+      );
+      if (batch.length === 0) break;
+      for (const event of batch) {
+        if (seen.has(event.id)) continue;
+        seen.add(event.id);
+        all.push(event);
+      }
+      if (batch.length < 50) break;
+    }
+  }
+
+  if (categories.length > 0) {
+    return all.filter(
+      (e) =>
+        categories.includes(e.category) ||
+        e.category === "other" ||
+        e.category === "community",
+    );
+  }
+  return all;
+}
+
+const SEATGEEK_TYPE_MAP = {
+  sports: "sports",
+  nba: "sports",
+  nfl: "sports",
+  mlb: "sports",
+  nhl: "sports",
+  mls: "sports",
+  ncaa_basketball: "sports",
+  ncaa_football: "sports",
+  concert: "music",
+  music_festival: "festival",
+  theater: "arts",
+  broadway_tickets_national: "arts",
+  comedy: "arts",
+};
+
+function mapSeatGeekEvent(event, countryCode) {
+  const venue = event.venue;
+  const type = event.type ?? "";
+  const title = event.title ?? event.short_title ?? "Event";
+  const titleLower = title.toLowerCase();
+
+  let category = SEATGEEK_TYPE_MAP[type] ?? "other";
+  if (titleLower.includes("festival")) category = "festival";
+
+  return {
+    id: `sg-${event.id}`,
+    source: "seatgeek",
+    title,
+    startDate: event.datetime_local?.slice(0, 10) ?? "",
+    category,
+    countryCode,
+    countryName: countries.getName(countryCode, "en"),
+    city: venue?.city,
+    region: venue?.state,
+    venue: venue?.name,
+    lat: venue?.location?.lat,
+    lng: venue?.location?.lon,
+    url: event.url ?? undefined,
+  };
+}
+
+async function fetchAllSeatGeek(clientId, countryCode, categories) {
+  const all = [];
+  const seen = new Set();
+
+  for (let page = 1; page <= 4; page += 1) {
+    const params = new URLSearchParams({
+      client_id: clientId,
+      per_page: "100",
+      page: String(page),
+      "venue.country": countryCode,
+    });
+    const res = await fetch(`https://api.seatgeek.com/2/events?${params}`);
+    if (!res.ok) {
+      console.warn(`SeatGeek ${countryCode}: HTTP ${res.status}`);
+      break;
+    }
+    const body = await res.json();
+    const batch = (body.events ?? []).map((e) =>
+      mapSeatGeekEvent(e, countryCode),
+    );
+    if (batch.length === 0) break;
+    for (const event of batch) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      all.push(event);
+    }
+    if (batch.length < 100) break;
+  }
+
+  if (categories.length > 0) {
+    return all.filter(
+      (e) =>
+        categories.includes(e.category) ||
+        e.category === "other" ||
+        e.category === "community",
+    );
+  }
+  return all;
+}
+
+function normalizeTitle(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function dedupeHolidays(items) {
+  const seen = new Set();
+  const sorted = [...items].sort(
+    (a, b) =>
+      (a.source === "nager" ? 0 : 1) - (b.source === "nager" ? 0 : 1),
+  );
+  const result = [];
+  for (const holiday of sorted) {
+    const key = `${holiday.date}|${normalizeTitle(holiday.localName || holiday.name)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(holiday);
+  }
+  return result;
+}
+
+function dedupeEvents(items) {
+  const seen = new Set();
+  const sorted = [...items].sort(
+    (a, b) =>
+      (a.source === "ticketmaster" ? 0 : 1) -
+      (b.source === "ticketmaster" ? 0 : 1),
+  );
+  const result = [];
+  for (const event of sorted) {
+    const key = `${event.startDate}|${normalizeTitle(event.title)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(event);
+  }
+  return result;
 }
 
 app.get("/health", (_req, res) => {
@@ -120,11 +594,11 @@ app.get("/api/holidays/heatmap", async (req, res) => {
   }
 
   try {
-    const countries = await fetchNager("/AvailableCountries");
+    const countryList = await fetchNager("/AvailableCountries");
     const counts = {};
 
     await Promise.all(
-      countries.map(async ({ countryCode }) => {
+      countryList.map(async ({ countryCode }) => {
         try {
           const holidays = await fetchNager(
             `/PublicHolidays/${year}/${countryCode}`,
@@ -147,6 +621,64 @@ app.get("/api/holidays/heatmap", async (req, res) => {
   }
 });
 
+app.get("/api/regions/:countryCode", async (req, res) => {
+  const countryCode = String(req.params.countryCode).toUpperCase();
+  const iso3 = iso3FromIso2(countryCode);
+  if (!iso3) {
+    res.status(400).json({ error: "invalid_country_code" });
+    return;
+  }
+
+  const cacheKey = `regions-geo-${countryCode}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  try {
+    const geo = await fetchGeoBoundaryGeoJSON(iso3, "ADM1");
+    const enriched = {
+      type: "FeatureCollection",
+      features: enrichBoundaryFeatures(geo),
+    };
+    setCache(cacheKey, enriched);
+    res.json(enriched);
+  } catch (err) {
+    console.error(err);
+    res.json({ type: "FeatureCollection", features: [] });
+  }
+});
+
+app.get("/api/cities/:countryCode", async (req, res) => {
+  const countryCode = String(req.params.countryCode).toUpperCase();
+  const iso3 = iso3FromIso2(countryCode);
+  if (!iso3) {
+    res.status(400).json({ error: "invalid_country_code" });
+    return;
+  }
+
+  const cacheKey = `cities-geo-${countryCode}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  try {
+    const geo = await fetchGeoBoundaryGeoJSON(iso3, "ADM2");
+    const enriched = {
+      type: "FeatureCollection",
+      features: enrichBoundaryFeatures(geo),
+    };
+    setCache(cacheKey, enriched);
+    res.json(enriched);
+  } catch (err) {
+    console.error(err);
+    res.json({ type: "FeatureCollection", features: [] });
+  }
+});
+
 app.get("/api/holidays/:countryCode", async (req, res) => {
   const countryCode = String(req.params.countryCode).toUpperCase();
   const year = Number(req.query.year) || new Date().getFullYear();
@@ -157,15 +689,39 @@ app.get("/api/holidays/:countryCode", async (req, res) => {
   }
 
   try {
-    const cacheKey = `holidays-${countryCode}-${year}`;
+    const cacheKey = `holidays-v2-${countryCode}-${year}${process.env.CALENDARIFIC_API_KEY ? "-cal" : ""}`;
     const cached = getCached(cacheKey);
     if (cached) {
       res.json(cached);
       return;
     }
-    const data = await fetchNager(`/PublicHolidays/${year}/${countryCode}`);
-    setCache(cacheKey, data);
-    res.json(data);
+
+    let nagerItems = [];
+    try {
+      const data = await fetchNager(`/PublicHolidays/${year}/${countryCode}`);
+      nagerItems = data.map((h) => ({ ...h, source: "nager" }));
+    } catch (err) {
+      if (!process.env.CALENDARIFIC_API_KEY) throw err;
+      console.warn(`Nager holidays ${countryCode}:`, err.message);
+    }
+
+    let merged = nagerItems;
+    const calendarificKey = process.env.CALENDARIFIC_API_KEY;
+    if (calendarificKey) {
+      try {
+        const calItems = await fetchCalendarific(
+          calendarificKey,
+          countryCode,
+          year,
+        );
+        merged = dedupeHolidays([...nagerItems, ...calItems]);
+      } catch (err) {
+        console.warn(`Calendarific ${countryCode}:`, err.message);
+      }
+    }
+
+    setCache(cacheKey, merged);
+    res.json(merged);
   } catch (err) {
     console.error(err);
     res.status(502).json({ error: "upstream_failed" });
@@ -174,55 +730,82 @@ app.get("/api/holidays/:countryCode", async (req, res) => {
 
 app.get("/api/events/:countryCode", async (req, res) => {
   const countryCode = String(req.params.countryCode).toUpperCase();
-  const apiKey = process.env.TICKETMASTER_API_KEY;
+  const ticketmasterKey = process.env.TICKETMASTER_API_KEY;
+  const eventbriteKey = process.env.EVENTBRITE_API_KEY;
+  const seatgeekId = process.env.SEATGEEK_CLIENT_ID;
+  const apiFootballKey = process.env.API_FOOTBALL_KEY;
 
-  if (!apiKey) {
+  if (!ticketmasterKey && !eventbriteKey && !seatgeekId && !apiFootballKey) {
     res.json([]);
     return;
   }
 
   const classificationParam = String(req.query.classification || "");
   const categories = classificationParam.split(",").filter(Boolean);
+  const year = new Date().getFullYear();
+  const from = String(req.query.from || `${year}-01-01`);
+  const to = String(req.query.to || `${year}-12-31`);
+
+  const sourceTag = [
+    ticketmasterKey ? "tm" : "",
+    eventbriteKey ? "eb" : "",
+    seatgeekId ? "sg" : "",
+    apiFootballKey ? "af" : "",
+  ]
+    .filter(Boolean)
+    .join("+");
 
   try {
-    const cacheKey = `events-${countryCode}-${categories.join("-")}`;
+    const cacheKey = `events-v6-${countryCode}-${categories.join("-")}-${from}-${to}-${sourceTag}`;
     const cached = getCached(cacheKey);
     if (cached) {
       res.json(cached);
       return;
     }
 
-    const params = new URLSearchParams({
-      apikey: apiKey,
-      countryCode,
-      size: "100",
-      sort: "date,asc",
-    });
-
-    if (categories.length === 1 && TICKETMASTER_SEGMENT_MAP[categories[0]]) {
-      params.set(
-        "classificationName",
-        TICKETMASTER_SEGMENT_MAP[categories[0]],
+    let events = [];
+    if (ticketmasterKey) {
+      events = await fetchAllTicketmaster(
+        ticketmasterKey,
+        countryCode,
+        categories,
       );
     }
-
-    const url = `https://app.ticketmaster.com/discovery/v2/events.json?${params}`;
-    const tmRes = await fetch(url);
-    if (!tmRes.ok) {
-      res.json([]);
-      return;
+    if (seatgeekId) {
+      const seatgeekEvents = await fetchAllSeatGeek(
+        seatgeekId,
+        countryCode,
+        categories,
+      );
+      events = dedupeEvents([...events, ...seatgeekEvents]);
+    }
+    if (apiFootballKey) {
+      const footballEvents = await fetchAllApiFootball(
+        apiFootballKey,
+        countryCode,
+        from,
+        to,
+        categories,
+        (code, lang) => countries.getName(code, lang),
+      );
+      if (footballEvents.length > 0) {
+        console.log(
+          `API-Football: ${footballEvents.length} fixtures for ${countryCode} (${from} → ${to})`,
+        );
+      }
+      events = dedupeEvents([...events, ...footballEvents]);
+    }
+    if (eventbriteKey) {
+      const eventbriteEvents = await fetchAllEventbrite(
+        eventbriteKey,
+        countryCode,
+        categories,
+      );
+      events = dedupeEvents([...events, ...eventbriteEvents]);
     }
 
-    const body = await tmRes.json();
-    let events = (body._embedded?.events ?? []).map((e) =>
-      mapTicketmasterEvent(e, countryCode),
-    );
-
-    if (categories.length > 0) {
-      events = events.filter((e) => categories.includes(e.category));
-    }
-
-    setCache(cacheKey, events);
+    const ttl = events.length === 0 ? 5 * 60 * 1000 : CACHE_TTL_MS;
+    setCache(cacheKey, events, ttl);
     res.json(events);
   } catch (err) {
     console.error(err);
@@ -230,6 +813,39 @@ app.get("/api/events/:countryCode", async (req, res) => {
   }
 });
 
+app.get("/api/geocode/search", async (req, res) => {
+  const q = String(req.query.q || "");
+  const countryCode = String(req.query.countryCode || "").toLowerCase();
+  try {
+    res.json(await searchGeocode(q, countryCode));
+  } catch (err) {
+    console.error(err);
+    res.json([]);
+  }
+});
+
+app.get("/api/geocode/reverse", async (req, res) => {
+  const lat = String(req.query.lat || "");
+  const lon = String(req.query.lon || "");
+  if (!lat || !lon) {
+    res.status(400).json({ error: "missing_coords" });
+    return;
+  }
+  try {
+    res.json(await reverseGeocode(lat, lon));
+  } catch (err) {
+    console.error(err);
+    res.status(502).json({ error: "upstream_failed" });
+  }
+});
+
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`API listening on http://127.0.0.1:${PORT}`);
+  console.log("Data sources configured:", {
+    calendarific: Boolean(process.env.CALENDARIFIC_API_KEY),
+    ticketmaster: Boolean(process.env.TICKETMASTER_API_KEY),
+    seatgeek: Boolean(process.env.SEATGEEK_CLIENT_ID),
+    eventbrite: Boolean(process.env.EVENTBRITE_API_KEY),
+    apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
+  });
 });

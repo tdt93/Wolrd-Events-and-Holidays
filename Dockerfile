@@ -12,7 +12,7 @@ RUN apk add --no-cache nodejs curl
 
 WORKDIR /app
 
-COPY server/index.js ./server/
+COPY server/index.js server/geocodeProxy.js server/apiFootball.js ./server/
 COPY docker/start.sh /start.sh
 RUN chmod +x /start.sh
 

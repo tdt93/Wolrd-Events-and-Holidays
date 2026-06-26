@@ -1,8 +1,12 @@
+import type { AppLanguage } from "../hooks/useSettings";
+import { t } from "../lib/locale";
+
 interface TopBarProps {
   search: string;
   onSearchChange: (v: string) => void;
   onNearMe: () => void;
   locating: boolean;
+  language: AppLanguage;
   children?: React.ReactNode;
 }
 
@@ -11,6 +15,7 @@ export function TopBar({
   onSearchChange,
   onNearMe,
   locating,
+  language,
   children,
 }: TopBarProps) {
   return (
@@ -19,15 +24,15 @@ export function TopBar({
         <span className="logo-icon" aria-hidden="true">
           ☀️
         </span>
-        <span className="logo-text">Sunny Atlas</span>
+        <span className="logo-text">{t("siteName", language)}</span>
       </div>
       <div className="search-wrap">
         <input
           type="search"
-          placeholder="Search countries…"
+          placeholder={t("searchCountries", language)}
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          aria-label="Search countries"
+          aria-label={t("searchCountries", language)}
         />
       </div>
       <button
@@ -36,7 +41,7 @@ export function TopBar({
         onClick={onNearMe}
         disabled={locating}
       >
-        {locating ? "Locating…" : "📍 Near me"}
+        {locating ? t("locating", language) : `📍 ${t("nearMe", language)}`}
       </button>
       {children}
     </header>

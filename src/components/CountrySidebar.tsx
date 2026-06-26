@@ -1,11 +1,23 @@
 import type { MapEvent } from "../types/event";
+import type { AppLanguage } from "../hooks/useSettings";
 import {
   downloadIcs,
   formatDisplayDate,
   generateIcs,
   isToday,
 } from "../lib/geocode";
-import { getCategoryStyle, getEventCategoryStyle, getPrimaryHolidayType } from "../lib/categories";
+import {
+  getCategoryStyle,
+  getEventCategoryStyle,
+  getPrimaryHolidayType,
+} from "../lib/categories";
+import {
+  celebrationsLabel,
+  eventCategoryLabel,
+  holidayTypeLabel,
+  t,
+  tf,
+} from "../lib/locale";
 import type { HolidayType } from "../types/event";
 
 interface CountrySidebarProps {
@@ -19,6 +31,21 @@ interface CountrySidebarProps {
   tripMode: boolean;
   tripFrom?: string;
   tripTo?: string;
+  language: AppLanguage;
+}
+
+function IconExport() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 3v10M8 9l4 4 4-4M5 19h14"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 export function CountrySidebar({
@@ -32,6 +59,7 @@ export function CountrySidebar({
   tripMode,
   tripFrom,
   tripTo,
+  language,
 }: CountrySidebarProps) {
   const handleExport = () => {
     if (!countryName || events.length === 0) return;
@@ -41,45 +69,50 @@ export function CountrySidebar({
 
   return (
     <div className="country-sidebar">
-      <div className="sidebar-header">
-        {countryName ? (
-          <>
-            <h2>{countryName}</h2>
-            <p className="subtitle">
-              {events.length} celebration{events.length !== 1 ? "s" : ""} in
-              range
-            </p>
-            <div className="sidebar-actions">
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={handleExport}
-                disabled={events.length === 0}
-              >
-                Export .ics
-              </button>
-              <button
-                type="button"
-                className={`btn-secondary watch-btn ${isWatched ? "watched" : ""}`}
-                onClick={onToggleWatch}
-              >
-                {isWatched ? "★ Watching" : "☆ Watch"}
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <h2>Where to next?</h2>
-            <p className="subtitle">
-              Pick a country on the map to discover its holidays
-            </p>
-          </>
-        )}
-      </div>
+      {countryName && (
+        <div className="sidebar-header">
+          <p className="subtitle">
+            {celebrationsLabel(events.length, language)}
+            {events.some((e) => e.source === "api-football") && (
+              <span className="sports-count">
+                {" "}
+                · {events.filter((e) => e.source === "api-football").length}{" "}
+                {t("footballFixture", language).toLowerCase()}
+              </span>
+            )}
+          </p>
+          <div className="sidebar-toolbar">
+            <button
+              type="button"
+              className={`btn-secondary watch-btn ${isWatched ? "watched" : ""}`}
+              onClick={onToggleWatch}
+            >
+              {isWatched ? `★ ${t("watchingBtn", language)}` : `☆ ${t("watch", language)}`}
+            </button>
+            <button
+              type="button"
+              className="icon-btn export-btn sidebar-toolbar__export"
+              onClick={handleExport}
+              disabled={events.length === 0}
+              aria-label={t("exportIcs", language)}
+              data-tooltip={t("exportIcs", language)}
+            >
+              <IconExport />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!countryName && (
+        <div className="sidebar-header sidebar-header--empty">
+          <h2>{t("whereToNext", language)}</h2>
+          <p className="subtitle">{t("pickCountry", language)}</p>
+        </div>
+      )}
 
       {tripMode && tripFrom && tripTo && (
         <div className="trip-banner">
-          Trip mode: {tripFrom} → {tripTo}
+          {tf("tripModeBanner", language, { from: tripFrom, to: tripTo })}
         </div>
       )}
 
@@ -94,9 +127,7 @@ export function CountrySidebar({
       {error && <p className="error-msg">{error}</p>}
 
       {!loading && !error && countryName && events.length === 0 && (
-        <p className="empty-msg">
-          No holidays in this range — try widening your dates.
-        </p>
+        <p className="empty-msg">{t("emptyEvents", language)}</p>
       )}
 
       <ul className="event-list">
@@ -109,6 +140,9 @@ export function CountrySidebar({
             ? getCategoryStyle(primaryType)
             : getEventCategoryStyle(event.category);
           const place = [event.city, event.region].filter(Boolean).join(", ");
+          const typeLabel = isHoliday
+            ? holidayTypeLabel(primaryType, language)
+            : `${getEventCategoryStyle(event.category).icon} ${eventCategoryLabel(event.category, language)}`;
 
           return (
             <li
@@ -119,7 +153,7 @@ export function CountrySidebar({
               <div className="event-date">
                 {formatDisplayDate(event.startDate)}
                 {isToday(event.startDate) && (
-                  <span className="today-badge">Today</span>
+                  <span className="today-badge">{t("today", language)}</span>
                 )}
               </div>
               <div className="event-body">
@@ -139,13 +173,26 @@ export function CountrySidebar({
                       color: style.border,
                     }}
                   >
-                    {"icon" in style ? `${style.icon} ${style.label}` : style.label}
+                    {typeLabel}
                   </span>
                   {event.isLongWeekend && (
-                    <span className="long-weekend-badge">Long weekend</span>
+                    <span className="long-weekend-badge">
+                      {t("longWeekend", language)}
+                    </span>
                   )}
-                  {event.source === "ticketmaster" && (
-                    <span className="source-badge">Event</span>
+                  {(event.source === "ticketmaster" ||
+                    event.source === "eventbrite" ||
+                    event.source === "seatgeek" ||
+                    event.source === "api-football") && (
+                    <span className="source-badge">
+                      {event.source === "eventbrite"
+                        ? t("eventbriteEvent", language)
+                        : event.source === "seatgeek"
+                          ? t("seatgeekEvent", language)
+                          : event.source === "api-football"
+                            ? t("footballFixture", language)
+                            : t("ticketEvent", language)}
+                    </span>
                   )}
                 </div>
                 {event.url && (
@@ -155,7 +202,7 @@ export function CountrySidebar({
                     rel="noopener noreferrer"
                     className="event-link"
                   >
-                    View details →
+                    {t("viewDetails", language)} →
                   </a>
                 )}
               </div>

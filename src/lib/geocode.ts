@@ -32,14 +32,15 @@ export function nagerToMapEvents(
   countryName?: string,
 ): MapEvent[] {
   return holidays.map((h, i) => ({
-    id: `nager-${h.countryCode}-${h.date}-${i}`,
-    source: "nager",
+    id: `${h.source ?? "nager"}-${h.countryCode}-${h.date}-${i}`,
+    source: h.source ?? "nager",
     title: h.name,
     localTitle: h.localName,
     startDate: h.date,
     category: "holiday",
     holidayTypes: h.types,
     countryCode: h.countryCode,
+    countryName,
     region: h.counties?.[0] ?? undefined,
     lat: centroid[1] + (i % 5) * 0.15 - 0.3,
     lng: centroid[0] + Math.floor(i / 5) * 0.15 - 0.3,
@@ -53,18 +54,28 @@ export function filterEvents(
   holidayTypes: string[],
   eventCategories: string[],
   nationalOnly: boolean,
+  region?: string | null,
 ): MapEvent[] {
   return events.filter((e) => {
+    if (region) {
+      const matchRegion =
+        e.region === region ||
+        e.city === region ||
+        (e.region && e.region.includes(region));
+      if (!matchRegion) return false;
+    }
+
     if (e.category === "holiday") {
       if (nationalOnly && e.isGlobal === false) return false;
-      if (holidayTypes.length === 0) return true;
+      if (holidayTypes.length === 0) return false;
       const primary = e.holidayTypes
         ? getPrimaryHolidayType(e.holidayTypes)
         : "Public";
       return holidayTypes.includes(primary);
     }
-    if (eventCategories.length === 0) return true;
-    return eventCategories.includes(e.category);
+    if (eventCategories.length === 0) return false;
+    if (eventCategories.includes(e.category)) return true;
+    return e.category === "other" || e.category === "community";
   });
 }
 

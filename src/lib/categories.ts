@@ -66,6 +66,13 @@ export const EVENT_CATEGORIES: {
   { id: "arts", label: "Arts", icon: "🎨", bg: "#ffedd5", border: "#ea580c" },
 ];
 
+export const ALL_HOLIDAY_TYPES: HolidayType[] = HOLIDAY_CATEGORIES.map(
+  (c) => c.id,
+);
+export const ALL_EVENT_CATEGORIES: EventCategory[] = EVENT_CATEGORIES.map(
+  (c) => c.id,
+);
+
 export function getEventCategoryStyle(category: EventCategory) {
   return (
     EVENT_CATEGORIES.find((c) => c.id === category) ?? {

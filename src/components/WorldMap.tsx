@@ -1,17 +1,14 @@
-import { ScatterplotLayer, TextLayer } from "@deck.gl/layers";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { MapboxOverlay } from "@deck.gl/mapbox";
 import simplify from "@turf/simplify";
 import bbox from "@turf/bbox";
 import centroid from "@turf/centroid";
-import type { Feature, FeatureCollection, Geometry } from "geojson";
+import type { Feature, FeatureCollection, Geometry, Point } from "geojson";
 import type { MapEvent } from "../types/event";
 import type { SelectedCountry } from "../hooks/useMapSelection";
 import {
   COUNTRY_GEOJSON_URL,
-  COUNTRY_ZOOM,
   DEFAULT_CENTER,
   DEFAULT_ZOOM,
   countryCodeFromProps,
@@ -19,12 +16,42 @@ import {
 } from "../lib/mapConfig";
 import { LAND_FILL_COLOR, MINIMAL_MAP_STYLE } from "../lib/mapStyle";
 import { resolveCountryCode, iso2ToName } from "../lib/iso";
-import { getEventIcon } from "../lib/eventIcons";
+import { countryNameInLang } from "../lib/locale";
+import type { AppLanguage } from "../hooks/useSettings";
+import { createEventMarkerElement } from "../lib/markerIcons";
 
 const SOURCE_ID = "countries";
+const LABEL_SOURCE = "country-labels";
+const REGION_SOURCE = "regions";
+const CITY_SOURCE = "cities";
 const FILL_LAYER = "countries-fill";
-const LINE_LAYER = "countries-line";
 const HEAT_LAYER = "countries-heat";
+const LINE_LAYER = "countries-line";
+const REGION_LINE = "regions-line";
+const REGION_FILL = "regions-fill";
+const REGION_LABEL = "regions-label";
+const CITY_LINE = "cities-line";
+const CITY_FILL = "cities-fill";
+const CITY_LABEL = "cities-label";
+const COUNTRY_LABEL = "country-labels";
+
+function fitMaxZoom(box: [number, number, number, number]): number {
+  const span = Math.max(box[2] - box[0], box[3] - box[1]);
+  if (span < 3) return 9;
+  if (span < 8) return 7.5;
+  if (span < 18) return 6;
+  return 5;
+}
+
+function setBoundaryData(
+  map: maplibregl.Map,
+  sourceId: string,
+  geo: FeatureCollection,
+) {
+  const source = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+  if (!source) return;
+  source.setData(geo);
+}
 
 interface WorldMapProps {
   isGlobe: boolean;
@@ -35,7 +62,15 @@ interface WorldMapProps {
   events: MapEvent[];
   heatmapCounts: Record<string, number>;
   showHeatmap: boolean;
-  timelineDate: string | null;
+  showCountryNames: boolean;
+  language: AppLanguage;
+}
+
+interface MapTooltip {
+  x: number;
+  y: number;
+  title: string;
+  body: string;
 }
 
 function enrichGeoJson(geo: FeatureCollection): FeatureCollection {
@@ -69,6 +104,28 @@ function enrichGeoJson(geo: FeatureCollection): FeatureCollection {
   } catch {
     return enriched;
   }
+}
+
+function countriesToLabels(
+  geo: FeatureCollection,
+  language: AppLanguage,
+): FeatureCollection<Point> {
+  const features = geo.features.map((f) => {
+    const c = centroid(f as Feature<Geometry>);
+    const props = f.properties as Record<string, unknown>;
+    const iso2 = (props?.iso2 as string) || "";
+    const name =
+      countryNameInLang(iso2, language) ||
+      (props?.name as string) ||
+      iso2ToName(iso2) ||
+      "";
+    return {
+      type: "Feature",
+      geometry: c.geometry as Point,
+      properties: { name, iso2 },
+    } as Feature<Point>;
+  });
+  return { type: "FeatureCollection", features };
 }
 
 function featureCode(feature: Feature): string | null {
@@ -114,62 +171,21 @@ export function WorldMap({
   events,
   heatmapCounts,
   showHeatmap,
-  timelineDate,
+  showCountryNames,
+  language,
 }: WorldMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const overlayRef = useRef<MapboxOverlay | null>(null);
   const geoRef = useRef<FeatureCollection | null>(null);
+  const markersRef = useRef<maplibregl.Marker[]>([]);
   const layersReadyRef = useRef(false);
   const interactionsReadyRef = useRef(false);
   const isGlobeRef = useRef(isGlobe);
+  const languageRef = useRef(language);
+  const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
 
   isGlobeRef.current = isGlobe;
-
-  const buildMarkerLayers = useCallback(() => {
-    const filteredEvents =
-      timelineDate != null
-        ? events.filter((e) => e.startDate === timelineDate)
-        : events;
-
-    const withCoords = filteredEvents.filter(
-      (e) => e.lat != null && e.lng != null,
-    );
-
-    const pinLayer = new ScatterplotLayer<MapEvent>({
-      id: "event-pins",
-      data: withCoords,
-      pickable: true,
-      opacity: 0.95,
-      stroked: true,
-      filled: true,
-      radiusMinPixels: 10,
-      radiusMaxPixels: 14,
-      lineWidthMinPixels: 2,
-      getPosition: (d) => [d.lng!, d.lat!],
-      getFillColor: [255, 255, 255, 230],
-      getLineColor: [245, 158, 11, 255],
-    });
-
-    const iconLayer = new TextLayer<MapEvent>({
-      id: "event-icons",
-      data: withCoords,
-      pickable: true,
-      billboard: true,
-      getPosition: (d) => [d.lng!, d.lat!],
-      getText: (d) => getEventIcon(d),
-      getSize: 18,
-      getTextAnchor: "middle",
-      getAlignmentBaseline: "center",
-      fontFamily: "Arial, sans-serif",
-      characterSet: Array.from(
-        new Set(withCoords.map((d) => getEventIcon(d))),
-      ).join(""),
-      updateTriggers: { getText: [filteredEvents] },
-    });
-
-    return [pinLayer, iconLayer];
-  }, [events, timelineDate]);
+  languageRef.current = language;
 
   const updateCountryPaint = useCallback(
     (map: maplibregl.Map) => {
@@ -188,19 +204,19 @@ export function WorldMap({
         LAND_FILL_COLOR,
       ]);
 
-      map.setPaintProperty(FILL_LAYER, "fill-opacity", 1);
-
-      map.setPaintProperty(HEAT_LAYER, "fill-opacity", showHeatmap ? 0.45 : 0);
+      map.setPaintProperty(HEAT_LAYER, "fill-opacity", showHeatmap ? 0.72 : 0);
       map.setPaintProperty(HEAT_LAYER, "fill-color", [
         "interpolate",
         ["linear"],
         ["/", ["coalesce", ["get", "holidayCount"], 0], maxCount],
         0,
-        "#bae6fd",
-        0.35,
-        "#fef3c7",
+        "rgba(255,255,255,0)",
+        0.15,
+        "#fef08a",
+        0.5,
+        "#fb923c",
         1,
-        "#fb7185",
+        "#e11d48",
       ]);
 
       map.setPaintProperty(LINE_LAYER, "line-color", [
@@ -209,7 +225,7 @@ export function WorldMap({
         "#f59e0b",
         ["==", ["get", "iso2"], hovered],
         "#38bdf8",
-        "#94a3b8",
+        "#64748b",
       ]);
 
       map.setPaintProperty(LINE_LAYER, "line-width", [
@@ -245,6 +261,34 @@ export function WorldMap({
     },
     [heatmapCounts],
   );
+
+  const loadRegions = useCallback((map: maplibregl.Map, countryCode: string) => {
+    if (!map.getSource(REGION_SOURCE)) return;
+
+    fetch(`/api/regions/${countryCode}`)
+      .then((r) => r.json())
+      .then((geo: FeatureCollection) => setBoundaryData(map, REGION_SOURCE, geo))
+      .catch(() =>
+        setBoundaryData(map, REGION_SOURCE, {
+          type: "FeatureCollection",
+          features: [],
+        }),
+      );
+  }, []);
+
+  const loadCities = useCallback((map: maplibregl.Map, countryCode: string) => {
+    if (!map.getSource(CITY_SOURCE)) return;
+
+    fetch(`/api/cities/${countryCode}`)
+      .then((r) => r.json())
+      .then((geo: FeatureCollection) => setBoundaryData(map, CITY_SOURCE, geo))
+      .catch(() =>
+        setBoundaryData(map, CITY_SOURCE, {
+          type: "FeatureCollection",
+          features: [],
+        }),
+      );
+  }, []);
 
   const applyProjectionMode = useCallback((map: maplibregl.Map, globe: boolean) => {
     const center = map.getCenter();
@@ -291,12 +335,12 @@ export function WorldMap({
 
     let cancelled = false;
     let map: maplibregl.Map | null = null;
-    let overlay: MapboxOverlay | null = null;
 
     const setupLayers = (targetMap: maplibregl.Map, geo: FeatureCollection) => {
       if (cancelled || targetMap.getSource(SOURCE_ID)) return;
 
       geoRef.current = geo;
+      const labels = countriesToLabels(geo, languageRef.current);
 
       targetMap.addSource(SOURCE_ID, {
         type: "geojson",
@@ -304,13 +348,22 @@ export function WorldMap({
         generateId: false,
       });
 
-      targetMap.addLayer({
-        id: HEAT_LAYER,
-        type: "fill",
-        source: SOURCE_ID,
-        paint: { "fill-color": "#fde68a", "fill-opacity": 0 },
+      targetMap.addSource(LABEL_SOURCE, {
+        type: "geojson",
+        data: labels,
       });
 
+      targetMap.addSource(REGION_SOURCE, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      targetMap.addSource(CITY_SOURCE, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      // Land base
       targetMap.addLayer({
         id: FILL_LAYER,
         type: "fill",
@@ -318,20 +371,137 @@ export function WorldMap({
         paint: { "fill-color": LAND_FILL_COLOR, "fill-opacity": 1 },
       });
 
+      // Heatmap overlay on land
+      targetMap.addLayer({
+        id: HEAT_LAYER,
+        type: "fill",
+        source: SOURCE_ID,
+        paint: { "fill-color": "#fef08a", "fill-opacity": 0 },
+      });
+
+      // Country borders
       targetMap.addLayer({
         id: LINE_LAYER,
         type: "line",
         source: SOURCE_ID,
         paint: {
+          "line-color": "#64748b",
+          "line-width": 0.85,
+          "line-opacity": 0.95,
+        },
+      });
+
+      // Region subdivisions (states/provinces)
+      targetMap.addLayer({
+        id: REGION_FILL,
+        type: "fill",
+        source: REGION_SOURCE,
+        minzoom: 3,
+        paint: {
+          "fill-color": "#e2e8f0",
+          "fill-opacity": 0.2,
+        },
+      });
+
+      targetMap.addLayer({
+        id: REGION_LINE,
+        type: "line",
+        source: REGION_SOURCE,
+        minzoom: 3,
+        paint: {
           "line-color": "#94a3b8",
-          "line-width": 0.75,
-          "line-opacity": 0.85,
+          "line-width": 1.2,
+          "line-opacity": 0.8,
+        },
+      });
+
+      // City / county grids (finer detail when zoomed in)
+      targetMap.addLayer({
+        id: CITY_FILL,
+        type: "fill",
+        source: CITY_SOURCE,
+        minzoom: 5,
+        paint: {
+          "fill-color": "#cbd5e1",
+          "fill-opacity": 0.12,
+        },
+      });
+
+      targetMap.addLayer({
+        id: CITY_LINE,
+        type: "line",
+        source: CITY_SOURCE,
+        minzoom: 5,
+        paint: {
+          "line-color": "#64748b",
+          "line-width": 0.8,
+          "line-opacity": 0.6,
+          "line-dasharray": [2, 3],
+        },
+      });
+
+      targetMap.addLayer({
+        id: REGION_LABEL,
+        type: "symbol",
+        source: REGION_SOURCE,
+        minzoom: 4,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 7, 13],
+          "text-allow-overlap": false,
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+        },
+        paint: {
+          "text-color": "#334155",
+          "text-halo-color": "#f8fafc",
+          "text-halo-width": 1.5,
+        },
+      });
+
+      targetMap.addLayer({
+        id: CITY_LABEL,
+        type: "symbol",
+        source: CITY_SOURCE,
+        minzoom: 6,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 6, 9, 9, 11],
+          "text-allow-overlap": false,
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+        },
+        paint: {
+          "text-color": "#475569",
+          "text-halo-color": "#f8fafc",
+          "text-halo-width": 1.2,
+        },
+      });
+
+      // Country names
+      targetMap.addLayer({
+        id: COUNTRY_LABEL,
+        type: "symbol",
+        source: LABEL_SOURCE,
+        maxzoom: 5,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 2, 10, 5, 13],
+          "text-allow-overlap": false,
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+        },
+        paint: {
+          "text-color": "#1e293b",
+          "text-halo-color": "#f8fafc",
+          "text-halo-width": 1.5,
         },
       });
 
       layersReadyRef.current = true;
+      targetMap.setLayoutProperty(
+        COUNTRY_LABEL,
+        "visibility",
+        showCountryNames ? "visible" : "none",
+      );
       updateCountryPaint(targetMap);
-      overlay?.setProps({ layers: buildMarkerLayers() });
     };
 
     const attachInteractions = (targetMap: maplibregl.Map) => {
@@ -402,8 +572,6 @@ export function WorldMap({
         touchPitch: isGlobeRef.current,
       });
 
-      overlay = new MapboxOverlay({ interleaved: true, layers: [] });
-      map.addControl(overlay);
       map.addControl(
         new maplibregl.NavigationControl({
           visualizePitch: isGlobeRef.current,
@@ -413,7 +581,6 @@ export function WorldMap({
       );
 
       mapRef.current = map;
-      overlayRef.current = overlay;
 
       map.once("load", () => {
         if (cancelled || !map) return;
@@ -443,7 +610,6 @@ export function WorldMap({
       map?.remove();
       map = null;
       mapRef.current = null;
-      overlayRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -451,9 +617,7 @@ export function WorldMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
     const apply = () => safeMapOp(map, (m) => applyProjectionMode(m, isGlobe));
-
     if (map.loaded()) apply();
     else map.once("load", apply);
   }, [isGlobe, applyProjectionMode]);
@@ -464,14 +628,117 @@ export function WorldMap({
       safeMapOp(map, applyHeatmapCounts);
       safeMapOp(map, updateCountryPaint);
     }
-    overlayRef.current?.setProps({ layers: buildMarkerLayers() });
   }, [
     applyHeatmapCounts,
     updateCountryPaint,
-    buildMarkerLayers,
     heatmapCounts,
     showHeatmap,
   ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const geo = geoRef.current;
+    if (!map || !geo || !map.getSource(LABEL_SOURCE)) return;
+    safeMapOp(map, (m) => {
+      const source = m.getSource(LABEL_SOURCE) as maplibregl.GeoJSONSource;
+      source.setData(countriesToLabels(geo, language));
+      if (m.getLayer(COUNTRY_LABEL)) {
+        m.setLayoutProperty(
+          COUNTRY_LABEL,
+          "visibility",
+          showCountryNames ? "visible" : "none",
+        );
+      }
+    });
+  }, [language, showCountryNames]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const wrap = containerRef.current;
+    if (!map || !wrap) return;
+
+    markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
+
+    const visible = events;
+
+    for (const event of visible) {
+      if (event.lat == null || event.lng == null) continue;
+
+      const el = createEventMarkerElement(event);
+
+      const showTip = (clientX: number, clientY: number) => {
+        const rect = wrap.getBoundingClientRect();
+        setTooltip({
+          x: clientX - rect.left,
+          y: clientY - rect.top,
+          title: event.localTitle || event.title,
+          body: event.description || event.startDate,
+        });
+      };
+
+      el.addEventListener("mouseenter", (ev) =>
+        showTip(ev.clientX, ev.clientY),
+      );
+      el.addEventListener("mousemove", (ev) => showTip(ev.clientX, ev.clientY));
+      el.addEventListener("mouseleave", () => setTooltip(null));
+      el.addEventListener("focus", () => {
+        const rect = el.getBoundingClientRect();
+        showTip(rect.left + rect.width / 2, rect.top);
+      });
+      el.addEventListener("blur", () => setTooltip(null));
+
+      const marker = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat([event.lng, event.lat])
+        .addTo(map);
+      markersRef.current.push(marker);
+    }
+
+    return () => {
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
+    };
+  }, [events]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!selectedCountry?.code) {
+      safeMapOp(map, (m) => {
+        setBoundaryData(m, REGION_SOURCE, {
+          type: "FeatureCollection",
+          features: [],
+        });
+        setBoundaryData(m, CITY_SOURCE, {
+          type: "FeatureCollection",
+          features: [],
+        });
+      });
+      return;
+    }
+
+    safeMapOp(map, (m) => {
+      loadRegions(m, selectedCountry.code);
+      loadCities(m, selectedCountry.code);
+    });
+  }, [selectedCountry?.code, loadRegions, loadCities]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !selectedCountry?.code) return;
+
+    const onZoom = () => {
+      if (map.getZoom() >= 5) {
+        loadCities(map, selectedCountry.code);
+      }
+    };
+
+    map.on("zoomend", onZoom);
+    return () => {
+      map.off("zoomend", onZoom);
+    };
+  }, [selectedCountry?.code, loadCities]);
 
   useEffect(() => {
     if (!selectedCountry?.bbox) return;
@@ -484,10 +751,27 @@ export function WorldMap({
           [selectedCountry.bbox![0], selectedCountry.bbox![1]],
           [selectedCountry.bbox![2], selectedCountry.bbox![3]],
         ],
-        { padding: 48, duration: 850, maxZoom: COUNTRY_ZOOM },
+        {
+          padding: 48,
+          duration: 850,
+          maxZoom: fitMaxZoom(selectedCountry.bbox!),
+        },
       );
     });
   }, [selectedCountry]);
 
-  return <div ref={containerRef} className="world-map" aria-label="World map" />;
+  return (
+    <div className="world-map-wrap">
+      <div ref={containerRef} className="world-map" aria-label="World map" />
+      {tooltip && (
+        <div
+          className="map-tooltip"
+          style={{ left: tooltip.x + 12, top: tooltip.y + 12 }}
+        >
+          <strong>{tooltip.title}</strong>
+          {tooltip.body && <p>{tooltip.body}</p>}
+        </div>
+      )}
+    </div>
+  );
 }

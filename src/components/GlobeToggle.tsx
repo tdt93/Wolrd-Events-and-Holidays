@@ -1,18 +1,22 @@
+import type { AppLanguage } from "../hooks/useSettings";
+import { t } from "../lib/locale";
+
 interface GlobeToggleProps {
   isGlobe: boolean;
   onChange: (globe: boolean) => void;
+  language: AppLanguage;
 }
 
-export function GlobeToggle({ isGlobe, onChange }: GlobeToggleProps) {
+export function GlobeToggle({ isGlobe, onChange, language }: GlobeToggleProps) {
   return (
-    <div className="globe-toggle" role="group" aria-label="Map projection">
+    <div className="globe-toggle" role="group" aria-label={t("globe", language)}>
       <button
         type="button"
         className={isGlobe ? "active" : ""}
         onClick={() => onChange(true)}
         aria-pressed={isGlobe}
       >
-        🌍 Globe
+        🌍 {t("globeView", language)}
       </button>
       <button
         type="button"
@@ -20,7 +24,7 @@ export function GlobeToggle({ isGlobe, onChange }: GlobeToggleProps) {
         onClick={() => onChange(false)}
         aria-pressed={!isGlobe}
       >
-        🗺️ Map
+        🗺️ {t("mapView", language)}
       </button>
     </div>
   );
