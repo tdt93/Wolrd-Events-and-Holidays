@@ -104,6 +104,7 @@ export default function App() {
   const [linkCopied, setLinkCopied] = useState(false);
   const pendingRegionRef = useRef(initial.region);
   const pendingUrlCountryRef = useRef(initial.country);
+  const urlCountryHydratedRef = useRef(false);
 
   const {
     selected,
@@ -158,7 +159,7 @@ export default function App() {
   const heatmapCounts = useCountryHeatmap(year, from, to, true);
 
   useEffect(() => {
-    if (!initial.country || selected?.code === initial.country) return;
+    if (urlCountryHydratedRef.current || !initial.country) return;
 
     selectCountry(
       resolveCountrySelection(
@@ -177,7 +178,16 @@ export default function App() {
     setOpenPanel(
       initialPanelFromUrl(initial.panel, initial.country, initial.event),
     );
-  }, [initial.country, initial.event, initial.panel, initial.region, countries, selected?.code, selectCountry, settings.language]);
+    urlCountryHydratedRef.current = true;
+  }, [
+    initial.country,
+    initial.event,
+    initial.panel,
+    initial.region,
+    countries,
+    selectCountry,
+    settings.language,
+  ]);
 
   const prevCountryRef = useRef<string | null>(null);
 

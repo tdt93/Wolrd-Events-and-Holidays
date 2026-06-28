@@ -375,6 +375,20 @@ select {
   justify-content: center;
 }
 
+.dock-icon--doodle {
+  display: block;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.dock-btn:hover .dock-icon--doodle,
+.dock-btn:focus-visible .dock-icon--doodle {
+  transform: rotate(-2deg) scale(1.04);
+}
+
+.dock-btn.active .dock-icon--doodle {
+  transform: rotate(1deg);
+}
+
 .dock-btn[data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;
