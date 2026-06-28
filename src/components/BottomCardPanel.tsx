@@ -76,12 +76,7 @@ export function BottomCardPanel({
   };
 
   return (
-    <>
-      <div
-        className={`bottom-card__backdrop ${open ? "open" : ""}`}
-        aria-hidden={!open}
-      />
-      <aside
+    <aside
         className={`bottom-card bottom-card--${tone} ${open ? "bottom-card--open" : "bottom-card--peek"}${dragOffset > 0 ? " bottom-card--dragging" : ""}`}
         style={style}
         aria-expanded={open}
@@ -136,6 +131,5 @@ export function BottomCardPanel({
           </>
         )}
       </aside>
-    </>
   );
 }

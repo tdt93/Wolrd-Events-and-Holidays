@@ -17,6 +17,7 @@ const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
   CN: [104.0, 35.0],
   PL: [19.0, 52.0],
   VN: [106.0, 16.0],
+  TW: [121.0, 23.7],
 };
 
 export function getCountryCentroid(

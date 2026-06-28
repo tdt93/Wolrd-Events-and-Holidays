@@ -786,7 +786,10 @@ export function WorldMap({
       setTooltip(null);
     };
 
-    const onWrapClick = () => clearTip();
+    const onWrapClick = (e: MouseEvent) => {
+      if ((e.target as Element).closest(".map-tooltip")) return;
+      clearTip();
+    };
     wrap.addEventListener("click", onWrapClick);
 
     const showEventTip = (
@@ -1042,7 +1045,10 @@ export function WorldMap({
   }, [selectedRegion, regionGeo, selectedCountry?.code]);
 
   return (
-    <div className="world-map-wrap" id="main-map">
+    <div
+      className={`world-map-wrap${tooltip?.pinned ? " world-map-wrap--tooltip-pinned" : ""}`}
+      id="main-map"
+    >
       <div ref={containerRef} className="world-map" aria-label="World map" />
       {selectedCountry && regionsLoading && (
         <div
@@ -1066,6 +1072,7 @@ export function WorldMap({
           className={`map-tooltip${tooltip.pinned ? " map-tooltip--pinned" : ""}`}
           style={{ left: tooltip.x + 12, top: tooltip.y - 8 }}
           onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
           role={tooltip.pinned ? "dialog" : "tooltip"}
           aria-label={tooltip.title}
         >
@@ -1088,6 +1095,8 @@ export function WorldMap({
               target="_blank"
               rel="noopener noreferrer"
               className="map-tooltip__link"
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
             >
               View event →
             </a>

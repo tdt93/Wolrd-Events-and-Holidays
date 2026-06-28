@@ -519,148 +519,6 @@ async function fetchCalendarific(apiKey, countryCode, year, lang = "en") {
   );
 }
 
-const EVENTBRITE_CATEGORY_MAP = {
-  music: "103",
-  arts: "105",
-  sports: "108",
-  festival: "110",
-};
-
-function mapEventbriteEvent(event, countryCode) {
-  const venue = event.venue;
-  const categoryId = String(event.category_id ?? "");
-  const title = event.name?.text ?? event.name ?? "Event";
-  const titleLower = title.toLowerCase();
-
-  let category = "other";
-  if (categoryId === "103") category = "music";
-  else if (categoryId === "105") category = "arts";
-  else if (categoryId === "108") category = "sports";
-  else if (categoryId === "110" || titleLower.includes("festival")) {
-    category = "festival";
-  }
-
-  const start = event.start?.local ?? event.start?.utc ?? "";
-  const startDate = start.slice(0, 10);
-  const rawDesc = event.description?.text ?? "";
-  const info = rawDesc
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return {
-    id: `eb-${event.id}`,
-    source: "eventbrite",
-    title,
-    startDate,
-    category,
-    countryCode,
-    countryName: countries.getName(countryCode, "en"),
-    city: venue?.address?.city,
-    region: venue?.address?.region,
-    venue: venue?.name,
-    info: info || undefined,
-    description: info || undefined,
-    lat: venue?.latitude ? parseFloat(venue.latitude) : undefined,
-    lng: venue?.longitude ? parseFloat(venue.longitude) : undefined,
-    url: event.url ?? undefined,
-    imageUrl: event.logo?.url ?? undefined,
-  };
-}
-
-let eventbriteSearchWarned = false;
-
-async function fetchEventbritePage(token, countryCode, page, categoryId) {
-  const params = new URLSearchParams({
-    "location.country": countryCode,
-    expand: "venue",
-    page_size: "50",
-    page: String(page),
-    sort_by: "date",
-  });
-  if (categoryId) params.set("categories", categoryId);
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(
-      `https://www.eventbriteapi.com/v3/events/search/?${params}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: controller.signal,
-      },
-    );
-    if (!res.ok) {
-      if (!eventbriteSearchWarned) {
-        console.warn(
-          `Eventbrite search returned HTTP ${res.status}. Public event search was discontinued in 2020 — add SEATGEEK_CLIENT_ID or TICKETMASTER_API_KEY for ticketed events.`,
-        );
-        eventbriteSearchWarned = true;
-      }
-      return [];
-    }
-    const body = await res.json();
-    return (body.events ?? []).map((e) => mapEventbriteEvent(e, countryCode));
-  } catch (err) {
-    if (!eventbriteSearchWarned) {
-      console.warn(
-        "Eventbrite search unavailable (deprecated API). Skipping.",
-        err instanceof Error ? err.message : err,
-      );
-      eventbriteSearchWarned = true;
-    }
-    return [];
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function fetchAllEventbrite(token, countryCode, categories) {
-  if (process.env.EVENTBRITE_ENABLE !== "1") {
-    return [];
-  }
-
-  const categoryIds = new Set();
-  if (categories.length === 0) {
-    categoryIds.add(null);
-  } else {
-    for (const cat of categories) {
-      categoryIds.add(EVENTBRITE_CATEGORY_MAP[cat] ?? null);
-    }
-  }
-
-  const all = [];
-  const seen = new Set();
-
-  for (const categoryId of categoryIds) {
-    for (let page = 1; page <= 2; page += 1) {
-      const batch = await fetchEventbritePage(
-        token,
-        countryCode,
-        page,
-        categoryId,
-      );
-      if (batch.length === 0) break;
-      for (const event of batch) {
-        if (seen.has(event.id)) continue;
-        seen.add(event.id);
-        all.push(event);
-      }
-      if (batch.length < 50) break;
-    }
-  }
-
-  if (categories.length > 0) {
-    return all.filter(
-      (e) =>
-        categories.includes(e.category) ||
-        e.category === "other" ||
-        e.category === "community",
-    );
-  }
-  return all;
-}
-
 const SEATGEEK_TYPE_MAP = {
   sports: "sports",
   nba: "sports",
@@ -997,7 +855,6 @@ app.get("/api/holidays/:countryCode", async (req, res) => {
 
 async function loadTicketEvents(countryCode, categories, from, to, lang) {
   const ticketmasterKey = process.env.TICKETMASTER_API_KEY;
-  const eventbriteKey = process.env.EVENTBRITE_API_KEY;
   const seatgeekId = process.env.SEATGEEK_CLIENT_ID;
   const apiFootballKey = process.env.API_FOOTBALL_KEY;
   const tmLocale = TICKETMASTER_LOCALE[lang] ?? "en-us";
@@ -1035,14 +892,6 @@ async function loadTicketEvents(countryCode, categories, from, to, lang) {
     }
     events = dedupeEvents([...events, ...footballEvents]);
   }
-  if (eventbriteKey) {
-    const eventbriteEvents = await fetchAllEventbrite(
-      eventbriteKey,
-      countryCode,
-      categories,
-    );
-    events = dedupeEvents([...events, ...eventbriteEvents]);
-  }
 
   return applyEventInterest(events);
 }
@@ -1050,11 +899,10 @@ async function loadTicketEvents(countryCode, categories, from, to, lang) {
 app.get("/api/events/:countryCode", async (req, res) => {
   const countryCode = String(req.params.countryCode).toUpperCase();
   const ticketmasterKey = process.env.TICKETMASTER_API_KEY;
-  const eventbriteKey = process.env.EVENTBRITE_API_KEY;
   const seatgeekId = process.env.SEATGEEK_CLIENT_ID;
   const apiFootballKey = process.env.API_FOOTBALL_KEY;
 
-  if (!ticketmasterKey && !eventbriteKey && !seatgeekId && !apiFootballKey) {
+  if (!ticketmasterKey && !seatgeekId && !apiFootballKey) {
     res.json([]);
     return;
   }
@@ -1068,7 +916,6 @@ app.get("/api/events/:countryCode", async (req, res) => {
 
   const sourceTag = [
     ticketmasterKey ? "tm" : "",
-    eventbriteKey ? "eb" : "",
     seatgeekId ? "sg" : "",
     apiFootballKey ? "af" : "",
   ]
@@ -1106,7 +953,6 @@ app.get("/api/health", (_req, res) => {
       calendarific: Boolean(process.env.CALENDARIFIC_API_KEY),
       ticketmaster: Boolean(process.env.TICKETMASTER_API_KEY),
       seatgeek: Boolean(process.env.SEATGEEK_CLIENT_ID),
-      eventbrite: Boolean(process.env.EVENTBRITE_API_KEY),
       apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
     },
     apiFootballSeasons: {
@@ -1149,8 +995,6 @@ app.listen(PORT, "127.0.0.1", () => {
     calendarific: Boolean(process.env.CALENDARIFIC_API_KEY),
     ticketmaster: Boolean(process.env.TICKETMASTER_API_KEY),
     seatgeek: Boolean(process.env.SEATGEEK_CLIENT_ID),
-    eventbrite: Boolean(process.env.EVENTBRITE_API_KEY),
-    eventbriteEnabled: process.env.EVENTBRITE_ENABLE === "1",
     apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
   });
 });

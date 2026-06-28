@@ -30,6 +30,7 @@ import {
   getDatePresetRange,
 } from "./lib/geocode";
 import { parseUrlState, writeUrlState, buildShareUrl } from "./lib/urlState";
+import { resolveCountrySelection } from "./lib/countrySelect";
 import { resolveCountryCode } from "./lib/iso";
 import { REPO_URL } from "./lib/config";
 import { CountryFlag } from "./components/CountryFlag";
@@ -102,6 +103,7 @@ export default function App() {
   );
   const [linkCopied, setLinkCopied] = useState(false);
   const pendingRegionRef = useRef(initial.region);
+  const pendingUrlCountryRef = useRef(initial.country);
 
   const {
     selected,
@@ -156,27 +158,26 @@ export default function App() {
   const heatmapCounts = useCountryHeatmap(year, from, to, true);
 
   useEffect(() => {
-    if (initial.country && countries.length > 0) {
-      const match = countries.find(
-        (c) => c.countryCode === initial.country,
-      );
-      if (match) {
-        selectCountry({
-          code: match.countryCode,
-          name: match.name,
-          centroid: [0, 20],
-        });
-        if (initial.region) {
-          pendingRegionRef.current = initial.region;
-        }
-        if (initial.event) {
-          pendingEventRef.current = initial.event;
-          setExpandedEventId(initial.event);
-        }
-        setOpenPanel(initialPanelFromUrl(initial.panel, initial.country, initial.event));
-      }
+    if (!initial.country || selected?.code === initial.country) return;
+
+    selectCountry(
+      resolveCountrySelection(
+        initial.country,
+        countries,
+        settings.language,
+      ),
+    );
+    if (initial.region) {
+      pendingRegionRef.current = initial.region;
     }
-  }, [initial.country, countries, selectCountry]);
+    if (initial.event) {
+      pendingEventRef.current = initial.event;
+      setExpandedEventId(initial.event);
+    }
+    setOpenPanel(
+      initialPanelFromUrl(initial.panel, initial.country, initial.event),
+    );
+  }, [initial.country, initial.event, initial.panel, initial.region, countries, selected?.code, selectCountry, settings.language]);
 
   const prevCountryRef = useRef<string | null>(null);
 
@@ -201,6 +202,11 @@ export default function App() {
   }, [regionNames, selected?.code]);
 
   useEffect(() => {
+    if (pendingUrlCountryRef.current) {
+      if (selected?.code !== pendingUrlCountryRef.current) return;
+      pendingUrlCountryRef.current = undefined;
+    }
+
     writeUrlState({
       country: selected?.code,
       from,
@@ -263,19 +269,19 @@ export default function App() {
         setOpenPanel(null);
       }
       if (state.country) {
-        const match = countries.find((c) => c.countryCode === state.country);
-        if (match) {
-          selectCountry({
-            code: match.countryCode,
-            name: match.name,
-            centroid: [0, 20],
-          });
-        }
+        pendingUrlCountryRef.current = state.country;
+        selectCountry(
+          resolveCountrySelection(
+            state.country,
+            countries,
+            settings.language,
+          ),
+        );
       }
     };
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, [countries, selectCountry]);
+  }, [countries, selectCountry, settings.language]);
 
   const handleCopyShareLink = useCallback(async () => {
     const url = buildShareUrl({
@@ -357,6 +363,15 @@ export default function App() {
     selected?.code,
     regionGeo,
   ]);
+
+  useEffect(() => {
+    const pending = pendingEventRef.current;
+    if (!pending || !selected?.code) return;
+    if (filteredEvents.some((e) => e.id === pending)) {
+      setExpandedEventId(pending);
+      pendingEventRef.current = undefined;
+    }
+  }, [filteredEvents, selected?.code]);
 
   const handleClearFilters = () => {
     setSelectedTypes([...ALL_HOLIDAY_TYPES]);

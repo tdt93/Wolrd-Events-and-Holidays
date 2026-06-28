@@ -97,13 +97,26 @@ select {
   height: 100%;
 }
 
+.world-map {
+  position: relative;
+  z-index: 1;
+}
+
+.world-map-wrap--tooltip-pinned .world-map {
+  pointer-events: none;
+}
+
+.world-map-wrap--tooltip-pinned .maplibregl-marker {
+  pointer-events: none;
+}
+
 .map-tooltip {
   position: absolute;
-  z-index: 30;
+  z-index: 55;
   max-width: 260px;
   padding: 8px 12px;
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(255, 255, 255, 0.98);
   border: 1px solid var(--border-soft);
   box-shadow: var(--shadow-soft);
   pointer-events: none;
@@ -112,6 +125,7 @@ select {
 
 .map-tooltip--pinned {
   pointer-events: auto;
+  z-index: 56;
 }
 
 .map-tooltip__image {
@@ -149,6 +163,9 @@ select {
   font-weight: 600;
   color: var(--accent-sky);
   text-decoration: none;
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
 }
 
 .map-tooltip__link:hover {
@@ -510,21 +527,6 @@ select {
   width: min(400px, calc(100vw - 72px));
   height: 0;
   z-index: 35;
-  pointer-events: none;
-}
-
-.bottom-card__backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 34;
-  background: rgba(15, 23, 42, 0.22);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--dur-med) var(--ease-out);
-}
-
-.bottom-card__backdrop.open {
-  opacity: 1;
   pointer-events: none;
 }
 
