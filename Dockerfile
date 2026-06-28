@@ -14,7 +14,7 @@ RUN npm ci --legacy-peer-deps --omit=dev
 
 FROM nginx:1.27-alpine
 
-RUN apk add --no-cache curl wget
+RUN apk add --no-cache nodejs curl wget
 
 WORKDIR /app
 
