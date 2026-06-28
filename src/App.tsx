@@ -592,6 +592,7 @@ export default function App() {
           onClick={() => togglePanel("events")}
           badge={filteredEvents.length}
           shortcut="1"
+          tone="mint"
         >
           <IconList />
         </DockButton>
@@ -601,6 +602,7 @@ export default function App() {
           active={openPanel === "filters"}
           onClick={() => togglePanel("filters")}
           shortcut="2"
+          tone="sun"
         >
           <IconFilter />
         </DockButton>
@@ -610,6 +612,7 @@ export default function App() {
           active={showHeatmap}
           onClick={() => setShowHeatmap((v) => !v)}
           shortcut="3"
+          tone="heat"
         >
           <IconHeatmap />
         </DockButton>
@@ -619,6 +622,7 @@ export default function App() {
           active={openPanel === "settings"}
           onClick={() => togglePanel("settings")}
           shortcut="4"
+          tone="sky"
         >
           <IconSettings />
         </DockButton>
@@ -627,6 +631,7 @@ export default function App() {
           description={t("dockAboutDesc", settings.language)}
           active={openPanel === "about"}
           onClick={() => togglePanel("about")}
+          tone="rose"
         >
           <IconInfo />
         </DockButton>

@@ -6,6 +6,7 @@ interface DockButtonProps {
   children: React.ReactNode;
   badge?: number;
   shortcut?: string;
+  tone?: "mint" | "sun" | "sky" | "rose" | "heat";
 }
 
 export function DockButton({
@@ -16,11 +17,12 @@ export function DockButton({
   children,
   badge,
   shortcut,
+  tone,
 }: DockButtonProps) {
   return (
     <button
       type="button"
-      className={`dock-btn ${active ? "active" : ""}`}
+      className={`dock-btn${tone ? ` dock-btn--${tone}` : ""} ${active ? "active" : ""}`}
       onClick={onClick}
       aria-label={label}
       aria-keyshortcuts={shortcut}

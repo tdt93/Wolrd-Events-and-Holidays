@@ -30,7 +30,7 @@ interface BottomCardPanelProps {
 const PULL_CLOSE_THRESHOLD = 88;
 
 /** Peek-tab hover lift (px); index matches stackIndex (Events → About). */
-const PEEK_HOVER_LIFT_PX = [2, 7.5, 8.5, 10] as const;
+const PEEK_HOVER_LIFT_PX = [2, 7.5, 5.5, 3.5] as const;
 
 export function BottomCardPanel({
   open,
@@ -90,6 +90,7 @@ export function BottomCardPanel({
       aria-expanded={open}
       aria-label={title}
     >
+      <span className="bottom-card__paper-texture" aria-hidden="true" />
       {!open ? (
         <button
           type="button"
@@ -104,7 +105,6 @@ export function BottomCardPanel({
         </button>
       ) : (
         <>
-          <span className="bottom-card__paper-texture" aria-hidden="true" />
           <div className="bottom-card__pin" aria-hidden="true">
             <DoodlePin />
           </div>

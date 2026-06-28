@@ -378,7 +378,7 @@ select {
   box-shadow: none;
   border: 3px solid #334155;
   padding: 9px 14px;
-  background: #fff6d8;
+  background: #fff6b4;
   backdrop-filter: none;
 }
 
@@ -432,10 +432,27 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 2px solid #334155;
-  background: color-mix(in srgb, #fff6d8 45%, #fef3c7);
-  box-shadow: none;
+  border: 2.5px solid #0f172a;
+  background: #0284c7;
+  color: #fff;
+  box-shadow: 0 3px 0 #0f172a;
   transform: rotate(-1deg);
+  transition:
+    background 0.2s var(--ease-out),
+    transform 0.25s var(--ease-out),
+    box-shadow 0.25s var(--ease-out);
+}
+
+.float-header .top-bar .near-me-chip:not(:disabled):hover,
+.float-header .top-bar .near-me-chip:not(:disabled):focus-visible {
+  background: #0369a1;
+  transform: rotate(-1deg) translateY(-2px) scale(1.02);
+  box-shadow: 0 4px 0 #0f172a;
+}
+
+.float-header .top-bar .near-me-chip:not(:disabled):active {
+  transform: rotate(-1deg) translateY(1px) scale(0.98);
+  box-shadow: 0 1px 0 #0f172a;
 }
 
 .near-me-icon--doodle {
@@ -490,6 +507,46 @@ select {
     box-shadow var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out);
+}
+
+.dock-btn--mint {
+  --dock-paper: #ecf6e4;
+  --dock-ink: #1a4d2e;
+  background: var(--dock-paper);
+  border-color: color-mix(in srgb, var(--dock-ink) 62%, #0f172a);
+  color: var(--dock-ink);
+}
+
+.dock-btn--sun {
+  --dock-paper: #fff6d8;
+  --dock-ink: #5c3d0a;
+  background: var(--dock-paper);
+  border-color: color-mix(in srgb, var(--dock-ink) 62%, #0f172a);
+  color: var(--dock-ink);
+}
+
+.dock-btn--sky {
+  --dock-paper: #e8f4fc;
+  --dock-ink: #0c3d5c;
+  background: var(--dock-paper);
+  border-color: color-mix(in srgb, var(--dock-ink) 62%, #0f172a);
+  color: var(--dock-ink);
+}
+
+.dock-btn--rose {
+  --dock-paper: #fcecf4;
+  --dock-ink: #6b2040;
+  background: var(--dock-paper);
+  border-color: color-mix(in srgb, var(--dock-ink) 62%, #0f172a);
+  color: var(--dock-ink);
+}
+
+.dock-btn--heat {
+  --dock-paper: #ffedd5;
+  --dock-ink: #9a3412;
+  background: var(--dock-paper);
+  border-color: color-mix(in srgb, var(--dock-ink) 62%, #0f172a);
+  color: var(--dock-ink);
 }
 
 .dock-btn__icon {
@@ -570,11 +627,11 @@ select {
 }
 
 .dock-btn.active {
-  border-color: #0f172a;
+  border-color: color-mix(in srgb, var(--dock-ink, #0f172a) 75%, #0f172a);
   border-width: 3px;
   box-shadow: none;
-  background: #fffef8;
-  color: var(--accent-sky);
+  background: color-mix(in srgb, var(--dock-paper, #fffef8) 82%, white);
+  color: var(--dock-ink, var(--accent-sky));
 }
 
 .dock-btn:active {
@@ -1063,9 +1120,13 @@ select {
     translateY(calc(-1 * var(--peek-hover-lift, 2px)));
 }
 
+.bottom-card--doodle.bottom-card--peek {
+  background-color: var(--note-paper);
+}
+
 .bottom-card--peek:hover .bottom-card__peek,
 .bottom-card--peek:focus-within .bottom-card__peek {
-  filter: brightness(1.03);
+  filter: none;
 }
 
 .bottom-card--open {
@@ -1119,7 +1180,7 @@ select {
   gap: 8px;
   padding: 8px 12px 9px;
   border: none;
-  background: var(--note-bg-peek, var(--note-bg));
+  background: transparent;
   cursor: pointer;
   text-align: left;
   color: var(--note-ink, var(--text-primary));
@@ -1127,7 +1188,7 @@ select {
 }
 
 .bottom-card__peek:hover {
-  filter: brightness(1.02);
+  filter: none;
 }
 
 .bottom-card__handle {
@@ -1995,7 +2056,7 @@ select {
 .globe-toggle {
   display: flex;
   gap: 3px;
-  background: #fff6d8;
+  background: #fff6b4;
   padding: 4px;
   border-radius: 999px;
   border: 3px solid #334155;
