@@ -8,7 +8,7 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 
-RUN apk add --no-cache nodejs curl
+RUN apk add --no-cache nodejs curl wget
 
 WORKDIR /app
 

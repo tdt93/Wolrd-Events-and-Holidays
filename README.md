@@ -2,6 +2,8 @@
 
 Interactive world map for exploring public holidays by country. Built with Vite, React, MapLibre GL, deck.gl, and Nager.Date.
 
+**Live:** https://festseekr.tdtdev.net/
+
 ## Development
 
 ```powershell
@@ -24,9 +26,22 @@ npm run preview
 ## Docker
 
 ```powershell
-docker build -t sunny-atlas .
-docker run --rm -p 8080:80 sunny-atlas
+docker build -t festseekr .
+docker run --rm -p 8080:80 festseekr
+# http://localhost:8080/health  →  ok
 ```
+
+## Deploy
+
+Same image-based flow as [My-site](https://github.com/tdt93/My-site):
+
+1. Push to `main` → CI builds, health-checks, pushes `ghcr.io/tdt93/wolrd-events-and-holidays`
+2. CI pins `Docker-deployment/festseekr/Dockerfile`
+3. Coolify deploys from `Docker-deployment`, base directory **`festseekr`**
+
+**Secrets:** `DEPLOY_REPO_TOKEN` in this repo (PAT with write access to `Docker-deployment`).
+
+**Coolify:** https://festseekr.tdtdev.net/ — port **80**, health check **`/health`** on port **80**, optional env vars from `.env.example`.
 
 ## Features
 

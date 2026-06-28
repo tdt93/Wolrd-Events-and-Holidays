@@ -1,5 +1,6 @@
 import type { AppUrlPanel, AppUrlState, EventCategory } from "../types/event";
 import { ALL_EVENT_CATEGORIES } from "./categories";
+import { SITE_URL } from "./config";
 
 const VALID_PANELS = new Set<AppUrlPanel>([
   "events",
@@ -46,6 +47,16 @@ export function parseUrlState(): AppUrlState {
 }
 
 export function buildShareUrl(state: AppUrlState): string {
+  const qs = serializeUrlQuery(state);
+  return qs ? `${SITE_URL}/?${qs}` : `${SITE_URL}/`;
+}
+
+export function writeUrlState(state: AppUrlState): void {
+  const qs = serializeUrlQuery(state);
+  window.history.replaceState(null, "", qs ? `/?${qs}` : "/");
+}
+
+function serializeUrlQuery(state: AppUrlState): string {
   const params = new URLSearchParams();
   if (state.country) params.set("country", state.country);
   if (state.from) params.set("from", state.from);
@@ -57,14 +68,5 @@ export function buildShareUrl(state: AppUrlState): string {
   if (state.nationalOnly) params.set("national", "1");
   if (state.panel) params.set("panel", state.panel);
   if (state.event) params.set("event", state.event);
-  const qs = params.toString();
-  return qs
-    ? `${window.location.origin}${window.location.pathname}?${qs}`
-    : `${window.location.origin}${window.location.pathname}`;
-}
-
-export function writeUrlState(state: AppUrlState): void {
-  const full = buildShareUrl(state);
-  const path = full.slice(window.location.origin.length) || "/";
-  window.history.replaceState(null, "", path);
+  return params.toString();
 }

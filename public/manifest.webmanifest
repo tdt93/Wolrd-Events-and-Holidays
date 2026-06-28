@@ -1,8 +1,10 @@
 {
+  "id": "https://festseekr.tdtdev.net/",
   "name": "FestSeekr",
   "short_name": "FestSeekr",
   "description": "Global festivals, holidays & events on an interactive world map.",
-  "start_url": "/",
+  "start_url": "https://festseekr.tdtdev.net/",
+  "scope": "https://festseekr.tdtdev.net/",
   "display": "standalone",
   "background_color": "#f0f9ff",
   "theme_color": "#0284c7",
