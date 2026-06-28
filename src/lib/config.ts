@@ -1,4 +1,5 @@
 export const SITE_NAME = "FestSeekr";
+export const SITE_VERSION = "0.5";
 export const SITE_URL = (
   import.meta.env.VITE_SITE_URL ?? "https://festseekr.tdtdev.net"
 ).replace(/\/$/, "");

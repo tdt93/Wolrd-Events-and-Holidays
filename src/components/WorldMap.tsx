@@ -15,7 +15,23 @@ import {
   countryCodeFromProps,
   countryNameFromProps,
 } from "../lib/mapConfig";
-import { LAND_FILL_COLOR, MINIMAL_MAP_STYLE } from "../lib/mapStyle";
+import {
+  CITY_FILL_COLOR,
+  CITY_LINE_COLOR,
+  LABEL_HALO_COLOR,
+  LABEL_TEXT_COLOR,
+  LAND_FILL_COLOR,
+  LAND_FILL_HOVER,
+  LAND_FILL_SELECTED,
+  LAND_LINE_COLOR,
+  LAND_LINE_HOVER,
+  LAND_LINE_SELECTED,
+  MINIMAL_MAP_STYLE,
+  REGION_FILL_DEFAULT,
+  REGION_FILL_SELECTED,
+  REGION_LINE_DEFAULT,
+  REGION_LINE_SELECTED,
+} from "../lib/mapStyle";
 import { resolveCountryCode, iso2ToName } from "../lib/iso";
 import { countryNameInLang, t } from "../lib/locale";
 import { eventPrimaryTitle } from "../lib/eventDisplay";
@@ -212,12 +228,26 @@ export function WorldMap({
   const onRegionSelectRef = useRef(onRegionSelect);
   const selectedRegionRef = useRef(selectedRegion);
   const lastFitCountryRef = useRef<string | null>(null);
+  const pinnedEventIdRef = useRef<string | null>(null);
   const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
+
+  const clearTooltip = useCallback(() => {
+    pinnedEventIdRef.current = null;
+    setTooltip(null);
+  }, []);
 
   isGlobeRef.current = isGlobe;
   languageRef.current = language;
   onRegionSelectRef.current = onRegionSelect;
   selectedRegionRef.current = selectedRegion;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && pinnedEventIdRef.current) clearTooltip();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [clearTooltip]);
 
   const updateCountryPaint = useCallback(
     (map: maplibregl.Map) => {
@@ -230,9 +260,9 @@ export function WorldMap({
       map.setPaintProperty(FILL_LAYER, "fill-color", [
         "case",
         ["==", ["get", "iso2"], selected],
-        "#fde68a",
+        LAND_FILL_SELECTED,
         ["==", ["get", "iso2"], hovered],
-        "#bae6fd",
+        LAND_FILL_HOVER,
         LAND_FILL_COLOR,
       ]);
 
@@ -254,10 +284,10 @@ export function WorldMap({
       map.setPaintProperty(LINE_LAYER, "line-color", [
         "case",
         ["==", ["get", "iso2"], selected],
-        "#f59e0b",
+        LAND_LINE_SELECTED,
         ["==", ["get", "iso2"], hovered],
-        "#38bdf8",
-        "#64748b",
+        LAND_LINE_HOVER,
+        LAND_LINE_COLOR,
       ]);
 
       map.setPaintProperty(LINE_LAYER, "line-width", [
@@ -268,28 +298,28 @@ export function WorldMap({
         [
           "case",
           ["==", ["get", "iso2"], selected],
-          2.4,
+          2.8,
           ["==", ["get", "iso2"], hovered],
-          1.8,
-          1.1,
+          2.2,
+          1.4,
         ],
         4,
         [
           "case",
           ["==", ["get", "iso2"], selected],
-          3.2,
+          3.6,
           ["==", ["get", "iso2"], hovered],
-          2.4,
-          1.6,
+          2.8,
+          1.9,
         ],
         8,
         [
           "case",
           ["==", ["get", "iso2"], selected],
-          4,
+          4.4,
           ["==", ["get", "iso2"], hovered],
-          3,
-          2.4,
+          3.4,
+          2.8,
         ],
       ]);
     },
@@ -306,8 +336,8 @@ export function WorldMap({
       map.setPaintProperty(REGION_FILL, "fill-color", [
         "case",
         ["==", ["get", "name"], sel],
-        "#7dd3fc",
-        "#e2e8f0",
+        REGION_FILL_SELECTED,
+        REGION_FILL_DEFAULT,
       ]);
 
       map.setPaintProperty(REGION_FILL, "fill-opacity", [
@@ -320,8 +350,8 @@ export function WorldMap({
       map.setPaintProperty(REGION_LINE, "line-color", [
         "case",
         ["==", ["get", "name"], sel],
-        "#0284c7",
-        "#64748b",
+        REGION_LINE_SELECTED,
+        REGION_LINE_DEFAULT,
       ]);
 
       map.setPaintProperty(REGION_LINE, "line-width", [
@@ -329,11 +359,11 @@ export function WorldMap({
         ["linear"],
         ["zoom"],
         2,
-        ["case", ["==", ["get", "name"], sel], 2.2, 1],
+        ["case", ["==", ["get", "name"], sel], 2.6, 1.3],
         5,
-        ["case", ["==", ["get", "name"], sel], 2.8, 1.4],
+        ["case", ["==", ["get", "name"], sel], 3.2, 1.7],
         8,
-        ["case", ["==", ["get", "name"], sel], 3.2, 2],
+        ["case", ["==", ["get", "name"], sel], 3.6, 2.2],
       ]);
     },
     [],
@@ -470,19 +500,19 @@ export function WorldMap({
         type: "line",
         source: SOURCE_ID,
         paint: {
-          "line-color": "#64748b",
+          "line-color": LAND_LINE_COLOR,
           "line-width": [
             "interpolate",
             ["linear"],
             ["zoom"],
             1,
-            1.1,
+            1.4,
             4,
-            1.6,
+            1.9,
             8,
-            2.4,
+            2.8,
           ],
-          "line-opacity": 0.95,
+          "line-opacity": 0.98,
         },
       });
 
@@ -493,7 +523,7 @@ export function WorldMap({
         source: REGION_SOURCE,
         minzoom: 2,
         paint: {
-          "fill-color": "#e2e8f0",
+          "fill-color": REGION_FILL_DEFAULT,
           "fill-opacity": 0.28,
         },
       });
@@ -504,19 +534,19 @@ export function WorldMap({
         source: REGION_SOURCE,
         minzoom: 2,
         paint: {
-          "line-color": "#64748b",
+          "line-color": REGION_LINE_DEFAULT,
           "line-width": [
             "interpolate",
             ["linear"],
             ["zoom"],
             2,
-            1.2,
+            1.3,
             5,
             1.8,
             8,
             2.4,
           ],
-          "line-opacity": 0.9,
+          "line-opacity": 0.95,
         },
       });
 
@@ -527,8 +557,8 @@ export function WorldMap({
         source: CITY_SOURCE,
         minzoom: 4,
         paint: {
-          "fill-color": "#cbd5e1",
-          "fill-opacity": 0.08,
+          "fill-color": CITY_FILL_COLOR,
+          "fill-opacity": 0.1,
         },
       });
 
@@ -538,20 +568,20 @@ export function WorldMap({
         source: CITY_SOURCE,
         minzoom: 4,
         paint: {
-          "line-color": "#94a3b8",
+          "line-color": CITY_LINE_COLOR,
           "line-width": [
             "interpolate",
             ["linear"],
             ["zoom"],
             4,
-            0.7,
+            0.9,
             8,
-            1.2,
+            1.4,
             11,
-            1.6,
+            1.8,
           ],
-          "line-opacity": 0.75,
-          "line-dasharray": [2, 2],
+          "line-opacity": 0.8,
+          "line-dasharray": [3, 2],
         },
       });
 
@@ -567,9 +597,9 @@ export function WorldMap({
           "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
         },
         paint: {
-          "text-color": "#334155",
-          "text-halo-color": "#f8fafc",
-          "text-halo-width": 1.5,
+          "text-color": LABEL_TEXT_COLOR,
+          "text-halo-color": LABEL_HALO_COLOR,
+          "text-halo-width": 2,
         },
       });
 
@@ -586,8 +616,8 @@ export function WorldMap({
         },
         paint: {
           "text-color": "#475569",
-          "text-halo-color": "#f8fafc",
-          "text-halo-width": 1.2,
+          "text-halo-color": LABEL_HALO_COLOR,
+          "text-halo-width": 1.6,
         },
       });
 
@@ -604,9 +634,9 @@ export function WorldMap({
           "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
         },
         paint: {
-          "text-color": "#1e293b",
-          "text-halo-color": "#f8fafc",
-          "text-halo-width": 1.5,
+          "text-color": LABEL_TEXT_COLOR,
+          "text-halo-color": LABEL_HALO_COLOR,
+          "text-halo-width": 2,
         },
       });
 
@@ -779,11 +809,10 @@ export function WorldMap({
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
-    const pinnedRef = { id: null as string | null };
+    const pinnedRef = pinnedEventIdRef;
 
     const clearTip = () => {
-      pinnedRef.id = null;
-      setTooltip(null);
+      clearTooltip();
     };
 
     const onWrapClick = (e: MouseEvent) => {
@@ -792,6 +821,11 @@ export function WorldMap({
     };
     wrap.addEventListener("click", onWrapClick);
 
+    const onMapClick = () => {
+      clearTip();
+    };
+    map.on("click", onMapClick);
+
     const showEventTip = (
       event: MapEvent,
       clientX: number,
@@ -799,7 +833,7 @@ export function WorldMap({
       pin = false,
     ) => {
       const rect = wrap.getBoundingClientRect();
-      if (pin) pinnedRef.id = event.id;
+      if (pin) pinnedRef.current = event.id;
       setTooltip({
         x: clientX - rect.left,
         y: clientY - rect.top,
@@ -814,20 +848,20 @@ export function WorldMap({
 
     const bindEventMarker = (event: MapEvent, el: HTMLButtonElement) => {
       el.addEventListener("mouseenter", (ev) => {
-        if (pinnedRef.id && pinnedRef.id !== event.id) return;
+        if (pinnedRef.current && pinnedRef.current !== event.id) return;
         showEventTip(event, ev.clientX, ev.clientY);
       });
       el.addEventListener("mousemove", (ev) => {
-        if (pinnedRef.id && pinnedRef.id !== event.id) return;
+        if (pinnedRef.current && pinnedRef.current !== event.id) return;
         showEventTip(event, ev.clientX, ev.clientY);
       });
       el.addEventListener("mouseleave", () => {
-        if (pinnedRef.id === event.id) return;
+        if (pinnedRef.current === event.id) return;
         setTooltip(null);
       });
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        if (pinnedRef.id === event.id) {
+        if (pinnedRef.current === event.id) {
           clearTip();
         } else {
           showEventTip(event, ev.clientX, ev.clientY, true);
@@ -838,7 +872,7 @@ export function WorldMap({
         showEventTip(event, rect.left + rect.width / 2, rect.top, true);
       });
       el.addEventListener("blur", () => {
-        if (pinnedRef.id === event.id) clearTip();
+        if (pinnedRef.current === event.id) clearTip();
       });
     };
 
@@ -907,12 +941,13 @@ export function WorldMap({
     return () => {
       if (renderTimer) window.clearTimeout(renderTimer);
       wrap.removeEventListener("click", onWrapClick);
+      map.off("click", onMapClick);
       map.off("moveend", onMapMove);
       map.off("zoomend", onMapMove);
       markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
     };
-  }, [events]);
+  }, [events, clearTooltip]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1045,10 +1080,7 @@ export function WorldMap({
   }, [selectedRegion, regionGeo, selectedCountry?.code]);
 
   return (
-    <div
-      className={`world-map-wrap${tooltip?.pinned ? " world-map-wrap--tooltip-pinned" : ""}`}
-      id="main-map"
-    >
+    <div className="world-map-wrap" id="main-map">
       <div ref={containerRef} className="world-map" aria-label="World map" />
       {selectedCountry && regionsLoading && (
         <div
@@ -1057,7 +1089,7 @@ export function WorldMap({
           aria-live="polite"
           aria-atomic="true"
         >
-          <div className="map-country-loading__note">
+          <div className="map-country-loading__note map-country-loading__note--doodle">
             <span className="loading-dots loading-dots--inline" aria-hidden="true">
               <span />
               <span />
@@ -1069,13 +1101,23 @@ export function WorldMap({
       )}
       {tooltip && (
         <div
-          className={`map-tooltip${tooltip.pinned ? " map-tooltip--pinned" : ""}`}
+          className={`map-tooltip map-tooltip--doodle${tooltip.pinned ? " map-tooltip--pinned" : ""}`}
           style={{ left: tooltip.x + 12, top: tooltip.y - 8 }}
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           role={tooltip.pinned ? "dialog" : "tooltip"}
           aria-label={tooltip.title}
         >
+          {tooltip.pinned && (
+            <button
+              type="button"
+              className="map-tooltip__close"
+              onClick={clearTooltip}
+              aria-label={t("close", language)}
+            >
+              ×
+            </button>
+          )}
           {tooltip.imageUrl && (
             <img
               className="map-tooltip__image"

@@ -3,42 +3,76 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#0284c7" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#5eb8f2" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="googlebot" content="index, follow" />
     <meta
       name="description"
-      content="FestSeekr — Global festivals, holidays & events on an interactive world map."
+      content="FestSeekr — explore public holidays, festivals, sports, concerts, and ticketed events worldwide. Filter by country, date, and region on an interactive map."
     />
+    <meta
+      name="keywords"
+      content="festivals, holidays, world events, travel planner, public holidays, interactive map, global celebrations, ticketed events"
+    />
+    <meta name="author" content="FestSeekr" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/logo.svg" />
     <link rel="canonical" href="https://festseekr.tdtdev.net/" />
+    <title>FestSeekr — Global festivals, holidays &amp; events</title>
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FestSeekr" />
     <meta property="og:url" content="https://festseekr.tdtdev.net/" />
     <meta
       property="og:title"
-      content="FestSeekr — Global festivals, holidays & events"
+      content="FestSeekr — Global festivals, holidays &amp; events"
     />
     <meta
       property="og:description"
-      content="FestSeekr — Global festivals, holidays & events on an interactive world map."
+      content="Explore public holidays, festivals, sports, and ticketed events on an interactive doodle-style world map."
     />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content="https://festseekr.tdtdev.net/og-image.svg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta
       name="twitter:title"
-      content="FestSeekr — Global festivals, holidays & events"
+      content="FestSeekr — Global festivals, holidays &amp; events"
     />
     <meta
       name="twitter:description"
-      content="FestSeekr — Global festivals, holidays & events on an interactive world map."
+      content="Explore public holidays, festivals, sports, and ticketed events on an interactive world map."
     />
+    <meta name="twitter:image" content="https://festseekr.tdtdev.net/og-image.svg" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "FestSeekr",
+        "url": "https://festseekr.tdtdev.net/",
+        "description": "Explore public holidays, festivals, sports, concerts, and ticketed events worldwide on an interactive map.",
+        "applicationCategory": "TravelApplication",
+        "operatingSystem": "Web",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "image": "https://festseekr.tdtdev.net/og-image.svg"
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <title>FestSeekr — Global festivals, holidays & events</title>
   </head>
   <body>
+    <noscript>
+      <h1>FestSeekr</h1>
+      <p>
+        Discover global festivals, holidays, and ticketed events on an interactive
+        world map. Enable JavaScript to use the map.
+      </p>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

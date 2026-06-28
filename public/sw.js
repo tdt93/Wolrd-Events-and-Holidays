@@ -1,5 +1,5 @@
 const CACHE = "festseekr-shell-v1";
-const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/favicon.svg"];
+const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/favicon.svg", "/logo.svg", "/og-image.svg", "/robots.txt", "/sitemap.xml"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

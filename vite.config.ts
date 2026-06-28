@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { geocodeDevMiddleware } from "./vite.geocode.js";
+import { seoStaticPlugin } from "./vite.seo.js";
 
 export default defineConfig({
   plugins: [
@@ -15,6 +16,7 @@ export default defineConfig({
       },
     },
     react(),
+    seoStaticPlugin(),
   ],
   server: {
     proxy: {

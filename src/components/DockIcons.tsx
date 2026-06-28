@@ -1,10 +1,8 @@
+import type { ReactNode } from "react";
+
 const ICON = 24;
 
-/** Slightly wobbly hand-drawn circle */
-const DOODLE_RING =
-  "M12 2.4c4.8.3 8.9 3.6 9.4 8.2.5 4.9-3.1 9.6-8 10.1-5.2.5-9.8-3.4-10.2-8.6C2.8 6.8 6.9 2.1 12 2.4z";
-
-function DoodleFrame({ children }: { children: React.ReactNode }) {
+function DoodleFrame({ children }: { children: ReactNode }) {
   return (
     <svg
       className="dock-icon dock-icon--doodle"
@@ -14,17 +12,9 @@ function DoodleFrame({ children }: { children: React.ReactNode }) {
       fill="none"
       aria-hidden="true"
     >
-      <path
-        d={DOODLE_RING}
-        fill="rgba(255, 251, 235, 0.55)"
-        stroke="rgba(245, 158, 11, 0.35)"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
       <g
         stroke="currentColor"
-        strokeWidth="1.85"
+        strokeWidth="2.5"
         strokeLinecap="round"
         strokeLinejoin="round"
         fill="none"
@@ -35,13 +25,12 @@ function DoodleFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Double-stroke sketch accent */
 function SketchAccent({ d }: { d: string }) {
   return (
     <path
       d={d}
       stroke="currentColor"
-      strokeWidth="2.4"
+      strokeWidth="2.8"
       strokeLinecap="round"
       strokeLinejoin="round"
       fill="none"
@@ -86,21 +75,13 @@ export function IconHeatmap() {
       fill="none"
       aria-hidden="true"
     >
-      <path
-        d={DOODLE_RING}
-        fill="rgba(255, 251, 235, 0.55)"
-        stroke="rgba(245, 158, 11, 0.35)"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
       <circle
         cx="9.2"
         cy="10.2"
         r="2.7"
         fill="#fef08a"
         stroke="currentColor"
-        strokeWidth="1.6"
+        strokeWidth="2.2"
         strokeLinecap="round"
       />
       <circle
@@ -109,7 +90,7 @@ export function IconHeatmap() {
         r="3.1"
         fill="#fdba74"
         stroke="currentColor"
-        strokeWidth="1.6"
+        strokeWidth="2.2"
         strokeLinecap="round"
       />
       <circle
@@ -118,7 +99,7 @@ export function IconHeatmap() {
         r="2.9"
         fill="#fca5a5"
         stroke="currentColor"
-        strokeWidth="1.6"
+        strokeWidth="2.2"
         strokeLinecap="round"
       />
       <path

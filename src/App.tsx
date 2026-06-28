@@ -32,9 +32,10 @@ import {
 import { parseUrlState, writeUrlState, buildShareUrl } from "./lib/urlState";
 import { resolveCountrySelection } from "./lib/countrySelect";
 import { resolveCountryCode } from "./lib/iso";
-import { REPO_URL } from "./lib/config";
+import { REPO_URL, SITE_VERSION } from "./lib/config";
 import { CountryFlag } from "./components/CountryFlag";
 import { useSettings } from "./hooks/useSettings";
+import { useSiteMeta } from "./hooks/useSiteMeta";
 import { usePanelShortcuts } from "./hooks/usePanelShortcuts";
 import {
   ALL_EVENT_CATEGORIES,
@@ -103,8 +104,15 @@ export default function App() {
   );
   const [linkCopied, setLinkCopied] = useState(false);
   const pendingRegionRef = useRef(initial.region);
-  const pendingUrlCountryRef = useRef(initial.country);
   const urlCountryHydratedRef = useRef(false);
+  const userChangedCountryRef = useRef(false);
+  const urlWriteEnabledRef = useRef(!initial.country);
+
+  const markUserCountryChange = useCallback(() => {
+    userChangedCountryRef.current = true;
+    urlCountryHydratedRef.current = true;
+    urlWriteEnabledRef.current = true;
+  }, []);
 
   const {
     selected,
@@ -118,6 +126,8 @@ export default function App() {
   const { watchlist, toggle, isWatched } = useWatchlist();
   const { settings, setLanguage, setShowCountryNames, setShowKeyboardHints } =
     useSettings();
+
+  useSiteMeta(settings.language);
 
   const localizedCountries = useMemo(
     () => localizeCountryList(countries, settings.language),
@@ -159,7 +169,14 @@ export default function App() {
   const heatmapCounts = useCountryHeatmap(year, from, to, true);
 
   useEffect(() => {
-    if (urlCountryHydratedRef.current || !initial.country) return;
+    if (
+      urlCountryHydratedRef.current ||
+      userChangedCountryRef.current ||
+      !initial.country
+    ) {
+      urlWriteEnabledRef.current = true;
+      return;
+    }
 
     selectCountry(
       resolveCountrySelection(
@@ -179,6 +196,7 @@ export default function App() {
       initialPanelFromUrl(initial.panel, initial.country, initial.event),
     );
     urlCountryHydratedRef.current = true;
+    urlWriteEnabledRef.current = true;
   }, [
     initial.country,
     initial.event,
@@ -212,10 +230,7 @@ export default function App() {
   }, [regionNames, selected?.code]);
 
   useEffect(() => {
-    if (pendingUrlCountryRef.current) {
-      if (selected?.code !== pendingUrlCountryRef.current) return;
-      pendingUrlCountryRef.current = undefined;
-    }
+    if (!urlWriteEnabledRef.current) return;
 
     writeUrlState({
       country: selected?.code,
@@ -279,7 +294,6 @@ export default function App() {
         setOpenPanel(null);
       }
       if (state.country) {
-        pendingUrlCountryRef.current = state.country;
         selectCountry(
           resolveCountrySelection(
             state.country,
@@ -287,11 +301,13 @@ export default function App() {
             settings.language,
           ),
         );
+      } else {
+        clearSelection();
       }
     };
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, [countries, selectCountry, settings.language]);
+  }, [countries, selectCountry, clearSelection, settings.language]);
 
   const handleCopyShareLink = useCallback(async () => {
     const url = buildShareUrl({
@@ -405,6 +421,7 @@ export default function App() {
   };
 
   const handleOpenCountry = (code: string, name: string) => {
+    markUserCountryChange();
     selectCountry({ code, name, centroid: [0, 20] });
     setOpenPanel("events");
   };
@@ -461,6 +478,7 @@ export default function App() {
   }, [search, localizedCountries]);
 
   const handleSelectFromMap = (country: SelectedCountry) => {
+    markUserCountryChange();
     const code = resolveCountryCode(country.code);
     if (!code) return;
     const name =
@@ -616,6 +634,13 @@ export default function App() {
 
       {selected && (
         <div className="float-selection">
+          {selected.code && (
+            <CountryFlag
+              code={selected.code}
+              label={selectedDisplayName ?? selected.name}
+              size={22}
+            />
+          )}
           <span>{selectedDisplayName ?? selected.name}</span>
           <button type="button" onClick={clearSelection} aria-label={t("clearSelection", settings.language)}>
             ✕
@@ -637,6 +662,7 @@ export default function App() {
             : t("dockEvents", settings.language)
         }
         closeLabel={t("close", settings.language)}
+        pullDownLabel={t("pullDownToClose", settings.language)}
         subtitle={selectedRegion ?? undefined}
         headerLeading={
           selected?.code ? (
@@ -677,6 +703,7 @@ export default function App() {
         onClose={() => setOpenPanel(null)}
         title={t("filtersDates", settings.language)}
         closeLabel={t("close", settings.language)}
+        pullDownLabel={t("pullDownToClose", settings.language)}
         stackIndex={1}
         stackTotal={4}
         tone="sun"
@@ -752,6 +779,7 @@ export default function App() {
         onClose={() => setOpenPanel(null)}
         title={t("settings", settings.language)}
         closeLabel={t("close", settings.language)}
+        pullDownLabel={t("pullDownToClose", settings.language)}
         stackIndex={2}
         stackTotal={4}
         tone="sky"
@@ -813,6 +841,7 @@ export default function App() {
         onClose={() => setOpenPanel(null)}
         title={t("aboutTitle", settings.language)}
         closeLabel={t("close", settings.language)}
+        pullDownLabel={t("pullDownToClose", settings.language)}
         stackIndex={3}
         stackTotal={4}
         tone="rose"
@@ -842,6 +871,9 @@ export default function App() {
           >
             <IconGitHub size={32} />
           </a>
+          <p className="about-version">
+            {tf("siteVersion", settings.language, { version: SITE_VERSION })}
+          </p>
         </div>
       </BottomCardPanel>
       </div>

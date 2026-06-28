@@ -1,5 +1,7 @@
 import type { AppLanguage } from "../hooks/useSettings";
 import { t } from "../lib/locale";
+import { SiteLogo } from "./SiteLogo";
+import { IconDoodleNearMe } from "./NearMeIcon";
 
 interface TopBarProps {
   search: string;
@@ -21,9 +23,7 @@ export function TopBar({
   return (
     <header className="top-bar">
       <div className="logo">
-        <span className="logo-icon" aria-hidden="true">
-          🎪
-        </span>
+        <SiteLogo size={36} className="logo-icon" />
         <div className="logo-text-wrap">
           <span className="logo-text">{t("siteName", language)}</span>
           <span className="logo-tagline">{t("siteTagline", language)}</span>
@@ -44,7 +44,14 @@ export function TopBar({
         onClick={onNearMe}
         disabled={locating}
       >
-        {locating ? t("locating", language) : `📍 ${t("nearMe", language)}`}
+        {locating ? (
+          t("locating", language)
+        ) : (
+          <>
+            <IconDoodleNearMe />
+            <span>{t("nearMe", language)}</span>
+          </>
+        )}
       </button>
       {children}
     </header>
