@@ -40,6 +40,8 @@ jobs:
             docker logs "$cid"
             exit 1
           fi
+          curl -sf http://127.0.0.1:8080/api/health | grep -q ok
+          curl -sf http://127.0.0.1:8080/api/countries | grep -q countryCode
           curl -sf http://127.0.0.1:8080/ | grep -qi html
 
       - name: Log in to GHCR

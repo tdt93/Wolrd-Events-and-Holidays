@@ -10,4 +10,10 @@ cleanup() {
 
 trap cleanup INT TERM
 
-nginx -g "daemon off;"
+sleep 1
+if ! kill -0 "$API_PID" 2>/dev/null; then
+  echo "API server failed to start" >&2
+  exit 1
+fi
+
+exec nginx -g "daemon off;"
