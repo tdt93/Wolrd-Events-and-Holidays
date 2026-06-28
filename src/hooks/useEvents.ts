@@ -66,9 +66,13 @@ export function useTicketmasterEvents({
           params.set("classification", categories.join(","));
         }
         const res = await fetch(`/api/events/${countryCode}?${params}`);
-        if (!res.ok) throw new Error("Events unavailable");
-        const data = (await res.json()) as MapEvent[];
+        const data = res.ok
+          ? ((await res.json()) as MapEvent[])
+          : [];
         if (!active) return;
+        if (!res.ok && import.meta.env.DEV) {
+          console.warn(`[events] ${countryCode}: HTTP ${res.status}`);
+        }
 
         const football = data.filter((e) => e.source === "api-football").length;
         if (import.meta.env.DEV) {

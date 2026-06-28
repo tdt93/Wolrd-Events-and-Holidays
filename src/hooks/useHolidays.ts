@@ -43,10 +43,9 @@ export function useHolidays({
       const res = await fetch(
         `/api/holidays/${countryCode}?year=${year}&lang=${language}`,
       );
-      if (!res.ok) {
-        throw new Error(`Failed to load holidays (${res.status})`);
-      }
-      const data = (await res.json()) as NagerHoliday[];
+      const data = res.ok
+        ? ((await res.json()) as NagerHoliday[])
+        : [];
       const center = centroid ?? getCountryCentroid(countryCode);
       const mapped = detectLongWeekends(
         nagerToMapEvents(data, center, countryName ?? undefined, language),
@@ -94,11 +93,13 @@ export function useHolidays({
         const res = await fetch(
           `/api/holidays/${countryCode}?year=${year}&lang=${language}`,
         );
-        if (!res.ok) {
-          throw new Error(`Failed to load holidays (${res.status})`);
-        }
-        const data = (await res.json()) as NagerHoliday[];
+        const data = res.ok
+          ? ((await res.json()) as NagerHoliday[])
+          : [];
         if (!active) return;
+        if (!res.ok) {
+          setError(null);
+        }
 
         const center = centroid ?? getCountryCentroid(countryCode);
         const mapped = detectLongWeekends(

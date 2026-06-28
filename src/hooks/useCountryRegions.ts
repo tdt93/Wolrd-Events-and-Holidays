@@ -14,10 +14,14 @@ interface RegionCacheEntry {
 }
 
 async function fetchBoundaryGeo(countryCode: string, kind: "regions" | "cities") {
-  const res = await fetch(`/api/${kind}/${countryCode}`);
-  if (!res.ok) return EMPTY;
-  const raw = (await res.json()) as FeatureCollection;
-  return enrichRegionGeoJson(raw ?? EMPTY);
+  try {
+    const res = await fetch(`/api/${kind}/${countryCode}`);
+    if (!res.ok) return EMPTY;
+    const raw = (await res.json()) as FeatureCollection;
+    return enrichRegionGeoJson(raw ?? EMPTY);
+  } catch {
+    return EMPTY;
+  }
 }
 
 export function useCountryRegions(countryCode: string | null) {
@@ -47,24 +51,30 @@ export function useCountryRegions(countryCode: string | null) {
     setCityGeo(EMPTY);
     setLoading(true);
 
-    Promise.all([
-      fetchBoundaryGeo(countryCode, "regions"),
-      fetchBoundaryGeo(countryCode, "cities"),
-    ])
-      .then(([regions, cities]) => {
+    fetchBoundaryGeo(countryCode, "regions")
+      .then((regions) => {
         if (cancelled) return;
-        sessionSet(cacheKey, { geo: regions, cityGeo: cities });
         setGeo(regions);
-        setCityGeo(cities);
+        setLoading(false);
+
+        fetchBoundaryGeo(countryCode, "cities")
+          .then((cities) => {
+            if (cancelled) return;
+            setCityGeo(cities);
+            sessionSet(cacheKey, { geo: regions, cityGeo: cities });
+          })
+          .catch(() => {
+            if (!cancelled) {
+              sessionSet(cacheKey, { geo: regions, cityGeo: EMPTY });
+            }
+          });
       })
       .catch(() => {
         if (!cancelled) {
           setGeo(EMPTY);
           setCityGeo(EMPTY);
+          setLoading(false);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
 
     return () => {

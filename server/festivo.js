@@ -66,7 +66,9 @@ export async function fetchFestivo(apiKey, countryCode, year, lang = "en") {
   const festivoLang = FESTIVO_LANG[lang] ?? "en";
   if (festivoLang) params.set("language", festivoLang);
 
-  const res = await fetch(`${FESTIVO_BASE}/list?${params}`);
+  const res = await fetch(`${FESTIVO_BASE}/list?${params}`, {
+    signal: AbortSignal.timeout(15_000),
+  });
   if (!res.ok) {
     if (res.status === 402) {
       console.warn(

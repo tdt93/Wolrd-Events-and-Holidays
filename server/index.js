@@ -74,6 +74,14 @@ const TICKETMASTER_LOCALE = {
 };
 
 const cache = new Map();
+const geoInflight = new Map();
+const apiInflight = new Map();
+const GEO_FETCH_TIMEOUT_MS = 45_000;
+const GEO_MAX_BYTES = 12 * 1024 * 1024;
+const UPSTREAM_TIMEOUT_MS = 12_000;
+const EVENTS_ROUTE_TIMEOUT_MS = 35_000;
+const TICKETMASTER_PAGE_TIMEOUT_MS = 10_000;
+const TICKETMASTER_MAX_PAGES = 2;
 
 function getCached(key) {
   const entry = cache.get(key);
@@ -88,12 +96,58 @@ function setCache(key, data, ttlMs = CACHE_TTL_MS) {
   cache.set(key, { data, expires: Date.now() + ttlMs });
 }
 
-async function fetchNager(path) {
-  const res = await fetch(`${NAGER_BASE}${path}`);
-  if (!res.ok) {
-    throw new Error(`Nager API error: ${res.status}`);
+async function fetchJson(url, options = {}, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const text = await res.text();
+    if (!text.trim()) return null;
+    return JSON.parse(text);
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json();
+}
+
+function withInflight(key, fn) {
+  const existing = apiInflight.get(key);
+  if (existing) return existing;
+  const promise = Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      apiInflight.delete(key);
+    });
+  apiInflight.set(key, promise);
+  return promise;
+}
+
+function withTimeout(ms, fn) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("route_timeout"));
+    }, ms);
+    Promise.resolve()
+      .then(fn)
+      .then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+  });
+}
+
+async function fetchNager(path) {
+  const data = await fetchJson(`${NAGER_BASE}${path}`, {}, 15_000);
+  if (!data) return [];
+  return Array.isArray(data) ? data : [];
 }
 
 const TICKETMASTER_SEGMENT_MAP = {
@@ -185,9 +239,20 @@ function iso3FromIso2(iso2) {
   return countries.alpha2ToAlpha3(iso2.toUpperCase());
 }
 
+function pickGeoDownloadUrl(entry, admLevel) {
+  if (!entry) return null;
+  if (admLevel === "ADM2" && entry.simplifiedGeometryGeoJSON) {
+    return entry.simplifiedGeometryGeoJSON;
+  }
+  if (entry.simplifiedGeometryGeoJSON) {
+    return entry.simplifiedGeometryGeoJSON;
+  }
+  return entry.gjDownloadURL ?? entry.downloadURL ?? null;
+}
+
 async function fetchGeoBoundaryGeoJSON(iso3, admLevel) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90000);
+  const timeout = setTimeout(() => controller.abort(), GEO_FETCH_TIMEOUT_MS);
   try {
     const metaRes = await fetch(
       `https://www.geoboundaries.org/api/current/gbOpen/${iso3}/${admLevel}/`,
@@ -199,19 +264,27 @@ async function fetchGeoBoundaryGeoJSON(iso3, admLevel) {
     const meta = await metaRes.json();
     const entries = Array.isArray(meta) ? meta : meta ? [meta] : [];
     const entry =
-      entries.find((m) => m?.gjDownloadURL) ??
+      entries.find((m) => m?.gjDownloadURL || m?.simplifiedGeometryGeoJSON) ??
       entries.find((m) => m?.downloadURL) ??
       entries[0];
-    if (!entry?.gjDownloadURL && !entry?.downloadURL) {
+    const geoUrl = pickGeoDownloadUrl(entry, admLevel);
+    if (!geoUrl) {
       return { type: "FeatureCollection", features: [] };
     }
-    const geoUrl = entry.gjDownloadURL ?? entry.downloadURL;
-    const geoRes = await fetch(geoUrl, {
-      signal: controller.signal,
-    });
+
+    const geoRes = await fetch(geoUrl, { signal: controller.signal });
     if (!geoRes.ok) {
       return { type: "FeatureCollection", features: [] };
     }
+
+    const contentLength = Number(geoRes.headers.get("content-length") || 0);
+    if (contentLength > GEO_MAX_BYTES) {
+      console.warn(
+        `geoBoundaries ${iso3}/${admLevel}: payload too large (${contentLength} bytes)`,
+      );
+      return { type: "FeatureCollection", features: [] };
+    }
+
     const geo = await geoRes.json();
     if (!geo?.features?.length) {
       return { type: "FeatureCollection", features: [] };
@@ -223,6 +296,38 @@ async function fetchGeoBoundaryGeoJSON(iso3, admLevel) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function fetchGeoBoundaryCached(iso3, admLevel) {
+  const key = `${iso3}-${admLevel}`;
+  const inflight = geoInflight.get(key);
+  if (inflight) return inflight;
+
+  const promise = fetchGeoBoundaryGeoJSON(iso3, admLevel).finally(() => {
+    geoInflight.delete(key);
+  });
+  geoInflight.set(key, promise);
+  return promise;
+}
+
+async function loadBoundaryCollection(countryCode, admLevel, cacheKey) {
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const iso3 = iso3FromIso2(countryCode);
+  if (!iso3) {
+    return { type: "FeatureCollection", features: [] };
+  }
+
+  const geo = await fetchGeoBoundaryCached(iso3, admLevel);
+  const enriched = {
+    type: "FeatureCollection",
+    features: enrichBoundaryFeatures(geo),
+  };
+  if (enriched.features.length > 0) {
+    setCache(cacheKey, enriched);
+  }
+  return enriched;
 }
 
 function enrichBoundaryFeatures(geo) {
@@ -257,12 +362,23 @@ async function fetchTicketmasterPage(
   if (locale) params.set("locale", locale);
 
   const url = `https://app.ticketmaster.com/discovery/v2/events.json?${params}`;
-  const tmRes = await fetch(url);
-  if (!tmRes.ok) return [];
-  const body = await tmRes.json();
-  return (body._embedded?.events ?? []).map((e) =>
-    mapTicketmasterEvent(e, countryCode),
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    TICKETMASTER_PAGE_TIMEOUT_MS,
   );
+  try {
+    const tmRes = await fetch(url, { signal: controller.signal });
+    if (!tmRes.ok) return [];
+    const body = await tmRes.json();
+    return (body._embedded?.events ?? []).map((e) =>
+      mapTicketmasterEvent(e, countryCode),
+    );
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function fetchAllTicketmaster(apiKey, countryCode, categories, locale) {
@@ -275,25 +391,37 @@ async function fetchAllTicketmaster(apiKey, countryCode, categories, locale) {
     }
   }
 
+  const segmentLists = await Promise.all(
+    [...segments].map(async (classification) => {
+      const batch = [];
+      const seen = new Set();
+      for (let page = 0; page < TICKETMASTER_MAX_PAGES; page += 1) {
+        const pageBatch = await fetchTicketmasterPage(
+          apiKey,
+          countryCode,
+          page,
+          classification,
+          locale,
+        );
+        if (pageBatch.length === 0) break;
+        for (const event of pageBatch) {
+          if (seen.has(event.id)) continue;
+          seen.add(event.id);
+          batch.push(event);
+        }
+        if (pageBatch.length < 200) break;
+      }
+      return batch;
+    }),
+  );
+
   const all = [];
   const seen = new Set();
-
-  for (const classification of segments) {
-    for (let page = 0; page < 4; page += 1) {
-      const batch = await fetchTicketmasterPage(
-        apiKey,
-        countryCode,
-        page,
-        classification,
-        locale,
-      );
-      if (batch.length === 0) break;
-      for (const event of batch) {
-        if (seen.has(event.id)) continue;
-        seen.add(event.id);
-        all.push(event);
-      }
-      if (batch.length < 200) break;
+  for (const list of segmentLists) {
+    for (const event of list) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      all.push(event);
     }
   }
 
@@ -368,14 +496,17 @@ async function fetchCalendarific(apiKey, countryCode, year, lang = "en") {
   });
   const calLang = CALENDARIFIC_LANG[lang] ?? "en";
   if (calLang !== "en") params.set("language", calLang);
-  const res = await fetch(
-    `https://calendarific.com/api/v2/holidays?${params}`,
-  );
-  if (!res.ok) {
-    console.warn(`Calendarific ${countryCode}: HTTP ${res.status}`);
+  let body;
+  try {
+    body = await fetchJson(
+      `https://calendarific.com/api/v2/holidays?${params}`,
+      {},
+      15_000,
+    );
+  } catch (err) {
+    console.warn(`Calendarific ${countryCode}:`, err.message);
     return [];
   }
-  const body = await res.json();
   if (body.meta?.code !== 200) {
     console.warn(
       `Calendarific ${countryCode}:`,
@@ -485,6 +616,10 @@ async function fetchEventbritePage(token, countryCode, page, categoryId) {
 }
 
 async function fetchAllEventbrite(token, countryCode, categories) {
+  if (process.env.EVENTBRITE_ENABLE !== "1") {
+    return [];
+  }
+
   const categoryIds = new Set();
   if (categories.length === 0) {
     categoryIds.add(null);
@@ -498,7 +633,7 @@ async function fetchAllEventbrite(token, countryCode, categories) {
   const seen = new Set();
 
   for (const categoryId of categoryIds) {
-    for (let page = 1; page <= 4; page += 1) {
+    for (let page = 1; page <= 2; page += 1) {
       const batch = await fetchEventbritePage(
         token,
         countryCode,
@@ -689,7 +824,7 @@ app.get("/api/countries", async (_req, res) => {
     res.json(data);
   } catch (err) {
     console.error(err);
-    res.status(502).json({ error: "upstream_failed" });
+    res.json([]);
   }
 });
 
@@ -729,35 +864,24 @@ app.get("/api/holidays/heatmap", async (req, res) => {
     res.json(counts);
   } catch (err) {
     console.error(err);
-    res.status(502).json({ error: "upstream_failed" });
+    res.json({});
   }
 });
 
 app.get("/api/regions/:countryCode", async (req, res) => {
   const countryCode = String(req.params.countryCode).toUpperCase();
-  const iso3 = iso3FromIso2(countryCode);
-  if (!iso3) {
+  if (!/^[A-Z]{2}$/.test(countryCode)) {
     res.status(400).json({ error: "invalid_country_code" });
     return;
   }
 
-  const cacheKey = `regions-geo-v2-${countryCode}`;
-  const cached = getCached(cacheKey);
-  if (cached) {
-    res.json(cached);
-    return;
-  }
-
   try {
-    const geo = await fetchGeoBoundaryGeoJSON(iso3, "ADM1");
-    const enriched = {
-      type: "FeatureCollection",
-      features: enrichBoundaryFeatures(geo),
-    };
-    if (enriched.features.length > 0) {
-      setCache(cacheKey, enriched);
-    }
-    res.json(enriched);
+    const geo = await loadBoundaryCollection(
+      countryCode,
+      "ADM1",
+      `regions-geo-v3-${countryCode}`,
+    );
+    res.json(geo);
   } catch (err) {
     console.error(err);
     res.json({ type: "FeatureCollection", features: [] });
@@ -766,29 +890,18 @@ app.get("/api/regions/:countryCode", async (req, res) => {
 
 app.get("/api/cities/:countryCode", async (req, res) => {
   const countryCode = String(req.params.countryCode).toUpperCase();
-  const iso3 = iso3FromIso2(countryCode);
-  if (!iso3) {
+  if (!/^[A-Z]{2}$/.test(countryCode)) {
     res.status(400).json({ error: "invalid_country_code" });
     return;
   }
 
-  const cacheKey = `cities-geo-v2-${countryCode}`;
-  const cached = getCached(cacheKey);
-  if (cached) {
-    res.json(cached);
-    return;
-  }
-
   try {
-    const geo = await fetchGeoBoundaryGeoJSON(iso3, "ADM2");
-    const enriched = {
-      type: "FeatureCollection",
-      features: enrichBoundaryFeatures(geo),
-    };
-    if (enriched.features.length > 0) {
-      setCache(cacheKey, enriched);
-    }
-    res.json(enriched);
+    const geo = await loadBoundaryCollection(
+      countryCode,
+      "ADM2",
+      `cities-geo-v3-${countryCode}`,
+    );
+    res.json(geo);
   } catch (err) {
     console.error(err);
     res.json({ type: "FeatureCollection", features: [] });
@@ -805,77 +918,134 @@ app.get("/api/holidays/:countryCode", async (req, res) => {
     return;
   }
 
+  const sourceTags = [
+    process.env.FESTIVO_API_KEY ? "festivo" : "",
+    process.env.CALENDARIFIC_API_KEY ? "cal" : "",
+  ]
+    .filter(Boolean)
+    .join("+");
+  const cacheKey = `holidays-v4-${countryCode}-${year}-${lang}${sourceTags ? `-${sourceTags}` : ""}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
   try {
-    const sourceTags = [
-      process.env.FESTIVO_API_KEY ? "festivo" : "",
-      process.env.CALENDARIFIC_API_KEY ? "cal" : "",
-    ]
-      .filter(Boolean)
-      .join("+");
-    const cacheKey = `holidays-v4-${countryCode}-${year}-${lang}${sourceTags ? `-${sourceTags}` : ""}`;
-    const cached = getCached(cacheKey);
-    if (cached) {
-      res.json(cached);
-      return;
-    }
+    const merged = await withInflight(cacheKey, () =>
+      withTimeout(30_000, async () => {
+        let nagerItems = [];
+        try {
+          const data = await fetchNager(`/PublicHolidays/${year}/${countryCode}`);
+          nagerItems = data.map((h) => ({ ...h, source: "nager" }));
+        } catch (err) {
+          if (
+            !process.env.CALENDARIFIC_API_KEY &&
+            !process.env.FESTIVO_API_KEY
+          ) {
+            throw err;
+          }
+          console.warn(`Nager holidays ${countryCode}:`, err.message);
+        }
 
-    let nagerItems = [];
-    try {
-      const data = await fetchNager(`/PublicHolidays/${year}/${countryCode}`);
-      nagerItems = data.map((h) => ({ ...h, source: "nager" }));
-    } catch (err) {
-      if (
-        !process.env.CALENDARIFIC_API_KEY &&
-        !process.env.FESTIVO_API_KEY
-      ) {
-        throw err;
-      }
-      console.warn(`Nager holidays ${countryCode}:`, err.message);
-    }
+        let merged = nagerItems;
+        const preferLocalized = lang !== "en";
 
-    let merged = nagerItems;
-    const preferLocalized = lang !== "en";
+        const festivoKey = process.env.FESTIVO_API_KEY;
+        if (festivoKey) {
+          try {
+            const festivoItems = await fetchFestivo(
+              festivoKey,
+              countryCode,
+              year,
+              lang,
+            );
+            merged = dedupeHolidays(
+              [...merged, ...festivoItems],
+              preferLocalized,
+            );
+          } catch (err) {
+            console.warn(`Festivo ${countryCode}:`, err.message);
+          }
+        }
 
-    const festivoKey = process.env.FESTIVO_API_KEY;
-    if (festivoKey) {
-      try {
-        const festivoItems = await fetchFestivo(
-          festivoKey,
-          countryCode,
-          year,
-          lang,
-        );
-        merged = dedupeHolidays(
-          [...merged, ...festivoItems],
-          preferLocalized,
-        );
-      } catch (err) {
-        console.warn(`Festivo ${countryCode}:`, err.message);
-      }
-    }
+        const calendarificKey = process.env.CALENDARIFIC_API_KEY;
+        if (calendarificKey) {
+          try {
+            const calItems = await fetchCalendarific(
+              calendarificKey,
+              countryCode,
+              year,
+              lang,
+            );
+            merged = dedupeHolidays([...merged, ...calItems], preferLocalized);
+          } catch (err) {
+            console.warn(`Calendarific ${countryCode}:`, err.message);
+          }
+        }
 
-    const calendarificKey = process.env.CALENDARIFIC_API_KEY;
-    if (calendarificKey) {
-      try {
-        const calItems = await fetchCalendarific(
-          calendarificKey,
-          countryCode,
-          year,
-          lang,
-        );
-        merged = dedupeHolidays([...merged, ...calItems], preferLocalized);
-      } catch (err) {
-        console.warn(`Calendarific ${countryCode}:`, err.message);
-      }
-    }
-
-    setCache(cacheKey, merged);
+        setCache(cacheKey, merged);
+        return merged;
+      }),
+    );
     res.json(merged);
   } catch (err) {
-    console.error(err);
-    res.status(502).json({ error: "upstream_failed" });
+    console.error(`holidays ${countryCode}:`, err.message);
+    res.json([]);
   }
 });
+
+async function loadTicketEvents(countryCode, categories, from, to, lang) {
+  const ticketmasterKey = process.env.TICKETMASTER_API_KEY;
+  const eventbriteKey = process.env.EVENTBRITE_API_KEY;
+  const seatgeekId = process.env.SEATGEEK_CLIENT_ID;
+  const apiFootballKey = process.env.API_FOOTBALL_KEY;
+  const tmLocale = TICKETMASTER_LOCALE[lang] ?? "en-us";
+
+  let events = [];
+  if (ticketmasterKey) {
+    events = await fetchAllTicketmaster(
+      ticketmasterKey,
+      countryCode,
+      categories,
+      tmLocale,
+    );
+  }
+  if (seatgeekId) {
+    const seatgeekEvents = await fetchAllSeatGeek(
+      seatgeekId,
+      countryCode,
+      categories,
+    );
+    events = dedupeEvents([...events, ...seatgeekEvents]);
+  }
+  if (apiFootballKey) {
+    const footballEvents = await fetchAllApiFootball(
+      apiFootballKey,
+      countryCode,
+      from,
+      to,
+      categories,
+      (code, langCode) => countries.getName(code, langCode),
+    );
+    if (footballEvents.length > 0) {
+      console.log(
+        `API-Football: ${footballEvents.length} fixtures for ${countryCode} (${from} → ${to})`,
+      );
+    }
+    events = dedupeEvents([...events, ...footballEvents]);
+  }
+  if (eventbriteKey) {
+    const eventbriteEvents = await fetchAllEventbrite(
+      eventbriteKey,
+      countryCode,
+      categories,
+    );
+    events = dedupeEvents([...events, ...eventbriteEvents]);
+  }
+
+  return applyEventInterest(events);
+}
 
 app.get("/api/events/:countryCode", async (req, res) => {
   const countryCode = String(req.params.countryCode).toUpperCase();
@@ -895,7 +1065,6 @@ app.get("/api/events/:countryCode", async (req, res) => {
   const from = String(req.query.from || `${year}-01-01`);
   const to = String(req.query.to || `${year}-12-31`);
   const lang = parseAppLang(req.query.lang);
-  const tmLocale = TICKETMASTER_LOCALE[lang] ?? "en-us";
 
   const sourceTag = [
     ticketmasterKey ? "tm" : "",
@@ -906,63 +1075,25 @@ app.get("/api/events/:countryCode", async (req, res) => {
     .filter(Boolean)
     .join("+");
 
+  const cacheKey = `events-v9-${countryCode}-${categories.join("-")}-${from}-${to}-${lang}-${sourceTag}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
   try {
-    const cacheKey = `events-v9-${countryCode}-${categories.join("-")}-${from}-${to}-${lang}-${sourceTag}`;
-    const cached = getCached(cacheKey);
-    if (cached) {
-      res.json(cached);
-      return;
-    }
-
-    let events = [];
-    if (ticketmasterKey) {
-      events = await fetchAllTicketmaster(
-        ticketmasterKey,
-        countryCode,
-        categories,
-        tmLocale,
-      );
-    }
-    if (seatgeekId) {
-      const seatgeekEvents = await fetchAllSeatGeek(
-        seatgeekId,
-        countryCode,
-        categories,
-      );
-      events = dedupeEvents([...events, ...seatgeekEvents]);
-    }
-    if (apiFootballKey) {
-      const footballEvents = await fetchAllApiFootball(
-        apiFootballKey,
-        countryCode,
-        from,
-        to,
-        categories,
-        (code, lang) => countries.getName(code, lang),
-      );
-      if (footballEvents.length > 0) {
-        console.log(
-          `API-Football: ${footballEvents.length} fixtures for ${countryCode} (${from} → ${to})`,
-        );
-      }
-      events = dedupeEvents([...events, ...footballEvents]);
-    }
-    if (eventbriteKey) {
-      const eventbriteEvents = await fetchAllEventbrite(
-        eventbriteKey,
-        countryCode,
-        categories,
-      );
-      events = dedupeEvents([...events, ...eventbriteEvents]);
-    }
-
-    events = applyEventInterest(events);
+    const events = await withInflight(cacheKey, () =>
+      withTimeout(EVENTS_ROUTE_TIMEOUT_MS, () =>
+        loadTicketEvents(countryCode, categories, from, to, lang),
+      ),
+    );
 
     const ttl = events.length === 0 ? 5 * 60 * 1000 : CACHE_TTL_MS;
     setCache(cacheKey, events, ttl);
     res.json(events);
   } catch (err) {
-    console.error(err);
+    console.error(`events ${countryCode}:`, err.message);
     res.json([]);
   }
 });
@@ -1007,7 +1138,7 @@ app.get("/api/geocode/reverse", async (req, res) => {
     res.json(await reverseGeocode(lat, lon));
   } catch (err) {
     console.error(err);
-    res.status(502).json({ error: "upstream_failed" });
+    res.json({ error: "upstream_failed" });
   }
 });
 
@@ -1019,6 +1150,11 @@ app.listen(PORT, "127.0.0.1", () => {
     ticketmaster: Boolean(process.env.TICKETMASTER_API_KEY),
     seatgeek: Boolean(process.env.SEATGEEK_CLIENT_ID),
     eventbrite: Boolean(process.env.EVENTBRITE_API_KEY),
+    eventbriteEnabled: process.env.EVENTBRITE_ENABLE === "1",
     apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
   });
+});
+
+process.on("unhandledRejection", (err) => {
+  console.error("unhandledRejection:", err);
 });
