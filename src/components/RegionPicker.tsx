@@ -1,60 +1,27 @@
-import { useEffect, useState } from "react";
 import type { AppLanguage } from "../hooks/useSettings";
 import { t } from "../lib/locale";
 
 interface RegionPickerProps {
-  countryCode: string | null;
   regions: string[];
   selected: string | null;
   onChange: (region: string | null) => void;
   language: AppLanguage;
+  loading?: boolean;
 }
 
 export function RegionPicker({
-  countryCode,
   regions,
   selected,
   onChange,
   language,
+  loading,
 }: RegionPickerProps) {
-  const [apiRegions, setApiRegions] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (!countryCode) {
-      setApiRegions([]);
-      return;
-    }
-
-    let cancelled = false;
-    fetch(`/api/regions/${countryCode}`)
-      .then((r) => r.json())
-      .then((geo: { features?: { properties?: Record<string, string> }[] }) => {
-        if (cancelled) return;
-        const names = (geo.features ?? [])
-          .map(
-            (f) =>
-              f.properties?.shapeName ??
-              f.properties?.name ??
-              "",
-          )
-          .filter(Boolean);
-        setApiRegions([...new Set(names)].sort());
-      })
-      .catch(() => {
-        if (!cancelled) setApiRegions([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [countryCode]);
-
-  const allRegions = [...new Set([...apiRegions, ...regions])].sort();
-  if (allRegions.length === 0) return null;
+  if (loading || regions.length === 0) return null;
 
   return (
     <div className="region-picker filter-card">
       <h3 className="filter-card__title">{t("region", language)}</h3>
+      <p className="filter-card__hint">{t("regionMapHint", language)}</p>
       <div className="chip-grid">
         <button
           type="button"
@@ -63,7 +30,7 @@ export function RegionPicker({
         >
           {t("allRegions", language)}
         </button>
-        {allRegions.map((r) => (
+        {regions.map((r) => (
           <button
             key={r}
             type="button"

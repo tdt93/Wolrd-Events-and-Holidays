@@ -5,6 +5,7 @@ interface DockButtonProps {
   onClick: () => void;
   children: React.ReactNode;
   badge?: number;
+  shortcut?: string;
 }
 
 export function DockButton({
@@ -14,6 +15,7 @@ export function DockButton({
   onClick,
   children,
   badge,
+  shortcut,
 }: DockButtonProps) {
   return (
     <button
@@ -21,8 +23,12 @@ export function DockButton({
       className={`dock-btn ${active ? "active" : ""}`}
       onClick={onClick}
       aria-label={label}
+      aria-keyshortcuts={shortcut}
       data-tooltip={`${label} — ${description}`}
     >
+      {shortcut && (
+        <kbd className="dock-btn__shortcut">{shortcut}</kbd>
+      )}
       <span className="dock-btn__icon" aria-hidden="true">
         {children}
       </span>

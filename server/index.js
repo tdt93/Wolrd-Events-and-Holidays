@@ -39,11 +39,39 @@ loadEnvFile();
 
 import { searchGeocode, reverseGeocode } from "./geocodeProxy.js";
 import { fetchAllApiFootball } from "./apiFootball.js";
+import { inferSportSub } from "./sportSub.js";
+import { fetchFestivo } from "./festivo.js";
+import { applyEventInterest } from "./eventInterest.js";
 
 const app = express();
 const PORT = Number(process.env.API_PORT || 3000);
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const NAGER_BASE = "https://date.nager.at/api/v3";
+
+const VALID_APP_LANGS = new Set(["en", "de", "fr", "es", "vi", "ja"]);
+
+function parseAppLang(raw) {
+  const lang = String(raw || "en").toLowerCase();
+  return VALID_APP_LANGS.has(lang) ? lang : "en";
+}
+
+const CALENDARIFIC_LANG = {
+  en: "en",
+  de: "de",
+  fr: "fr",
+  es: "es",
+  vi: "en",
+  ja: "ja",
+};
+
+const TICKETMASTER_LOCALE = {
+  en: "en-us",
+  de: "de-de",
+  fr: "fr-fr",
+  es: "es-es",
+  vi: "en-us",
+  ja: "ja-jp",
+};
 
 const cache = new Map();
 
@@ -75,6 +103,19 @@ const TICKETMASTER_SEGMENT_MAP = {
   arts: "Arts & Theatre",
 };
 
+function pickEventImage(images) {
+  if (!Array.isArray(images) || images.length === 0) return undefined;
+  const sorted = [...images].sort(
+    (a, b) => (b.width ?? 0) - (a.width ?? 0),
+  );
+  const wide =
+    sorted.find((img) => img.ratio === "16_9" && (img.width ?? 0) >= 640) ??
+    sorted.find((img) => img.ratio === "16_9") ??
+    sorted.find((img) => (img.width ?? 0) >= 640) ??
+    sorted[0];
+  return wide?.url ?? undefined;
+}
+
 function mapTicketmasterEvent(event, countryCode) {
   const classifications = event.classifications ?? [];
   const c0 = classifications[0];
@@ -102,7 +143,7 @@ function mapTicketmasterEvent(event, countryCode) {
   const region = venue?.state?.name ?? venue?.state?.stateCode;
   const info = (event.info || event.pleaseNote || "").trim();
 
-  return {
+  const mapped = {
     id: `tm-${event.id}`,
     source: "ticketmaster",
     title: event.name,
@@ -124,7 +165,20 @@ function mapTicketmasterEvent(event, countryCode) {
       ? parseFloat(venue.location.longitude)
       : undefined,
     url: event.url ?? undefined,
+    imageUrl: pickEventImage(event.images),
   };
+
+  if (category === "sports") {
+    mapped.sportSub = inferSportSub({
+      source: "ticketmaster",
+      genre,
+      subGenre,
+      typeName,
+      title: event.name ?? "",
+    });
+  }
+
+  return mapped;
 }
 
 function iso3FromIso2(iso2) {
@@ -133,7 +187,7 @@ function iso3FromIso2(iso2) {
 
 async function fetchGeoBoundaryGeoJSON(iso3, admLevel) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), 90000);
   try {
     const metaRes = await fetch(
       `https://www.geoboundaries.org/api/current/gbOpen/${iso3}/${admLevel}/`,
@@ -143,19 +197,26 @@ async function fetchGeoBoundaryGeoJSON(iso3, admLevel) {
       return { type: "FeatureCollection", features: [] };
     }
     const meta = await metaRes.json();
-    const entry = Array.isArray(meta)
-      ? (meta.find((m) => m.gjDownloadURL) ?? meta[0])
-      : null;
-    if (!entry?.gjDownloadURL) {
+    const entries = Array.isArray(meta) ? meta : meta ? [meta] : [];
+    const entry =
+      entries.find((m) => m?.gjDownloadURL) ??
+      entries.find((m) => m?.downloadURL) ??
+      entries[0];
+    if (!entry?.gjDownloadURL && !entry?.downloadURL) {
       return { type: "FeatureCollection", features: [] };
     }
-    const geoRes = await fetch(entry.gjDownloadURL, {
+    const geoUrl = entry.gjDownloadURL ?? entry.downloadURL;
+    const geoRes = await fetch(geoUrl, {
       signal: controller.signal,
     });
     if (!geoRes.ok) {
       return { type: "FeatureCollection", features: [] };
     }
-    return geoRes.json();
+    const geo = await geoRes.json();
+    if (!geo?.features?.length) {
+      return { type: "FeatureCollection", features: [] };
+    }
+    return geo;
   } catch (err) {
     console.warn(`geoBoundaries ${iso3}/${admLevel}:`, err.message);
     return { type: "FeatureCollection", features: [] };
@@ -178,7 +239,13 @@ function enrichBoundaryFeatures(geo) {
   }));
 }
 
-async function fetchTicketmasterPage(apiKey, countryCode, page, classification) {
+async function fetchTicketmasterPage(
+  apiKey,
+  countryCode,
+  page,
+  classification,
+  locale,
+) {
   const params = new URLSearchParams({
     apikey: apiKey,
     countryCode,
@@ -187,6 +254,7 @@ async function fetchTicketmasterPage(apiKey, countryCode, page, classification) 
     sort: "date,asc",
   });
   if (classification) params.set("classificationName", classification);
+  if (locale) params.set("locale", locale);
 
   const url = `https://app.ticketmaster.com/discovery/v2/events.json?${params}`;
   const tmRes = await fetch(url);
@@ -197,7 +265,7 @@ async function fetchTicketmasterPage(apiKey, countryCode, page, classification) 
   );
 }
 
-async function fetchAllTicketmaster(apiKey, countryCode, categories) {
+async function fetchAllTicketmaster(apiKey, countryCode, categories, locale) {
   const segments = new Set();
   if (categories.length === 0) {
     segments.add(null);
@@ -217,6 +285,7 @@ async function fetchAllTicketmaster(apiKey, countryCode, categories) {
         countryCode,
         page,
         classification,
+        locale,
       );
       if (batch.length === 0) break;
       for (const event of batch) {
@@ -291,12 +360,14 @@ function mapCalendarificHoliday(holiday, countryCode) {
   };
 }
 
-async function fetchCalendarific(apiKey, countryCode, year) {
+async function fetchCalendarific(apiKey, countryCode, year, lang = "en") {
   const params = new URLSearchParams({
     api_key: apiKey,
     country: countryCode,
     year: String(year),
   });
+  const calLang = CALENDARIFIC_LANG[lang] ?? "en";
+  if (calLang !== "en") params.set("language", calLang);
   const res = await fetch(
     `https://calendarific.com/api/v2/holidays?${params}`,
   );
@@ -362,6 +433,7 @@ function mapEventbriteEvent(event, countryCode) {
     lat: venue?.latitude ? parseFloat(venue.latitude) : undefined,
     lng: venue?.longitude ? parseFloat(venue.longitude) : undefined,
     url: event.url ?? undefined,
+    imageUrl: event.logo?.url ?? undefined,
   };
 }
 
@@ -485,14 +557,29 @@ function mapSeatGeekEvent(event, countryCode) {
     title,
     startDate: event.datetime_local?.slice(0, 10) ?? "",
     category,
+    sportSub:
+      category === "sports"
+        ? inferSportSub({
+            source: "seatgeek",
+            title,
+            seatgeekType: type,
+          })
+        : undefined,
     countryCode,
     countryName: countries.getName(countryCode, "en"),
     city: venue?.city,
     region: venue?.state,
     venue: venue?.name,
-    lat: venue?.location?.lat,
-    lng: venue?.location?.lon,
+    lat: venue?.location?.lat != null ? parseFloat(String(venue.location.lat)) : undefined,
+    lng: venue?.location?.lon != null ? parseFloat(String(venue.location.lon)) : undefined,
     url: event.url ?? undefined,
+    imageUrl:
+      event.performers?.[0]?.image ??
+      event.performers?.[0]?.images?.huge ??
+      event.image?.url ??
+      undefined,
+    popularity:
+      typeof event.popularity === "number" ? event.popularity : undefined,
   };
 }
 
@@ -543,11 +630,20 @@ function normalizeTitle(value) {
     .trim();
 }
 
-function dedupeHolidays(items) {
+function holidaySourceRank(source, preferLocalized) {
+  if (source === "festivo") return 0;
+  if (preferLocalized && source === "calendarific") return 1;
+  if (source === "nager") return preferLocalized ? 3 : 1;
+  if (source === "calendarific") return 2;
+  return 4;
+}
+
+function dedupeHolidays(items, preferLocalized = false) {
   const seen = new Set();
   const sorted = [...items].sort(
     (a, b) =>
-      (a.source === "nager" ? 0 : 1) - (b.source === "nager" ? 0 : 1),
+      holidaySourceRank(a.source, preferLocalized) -
+      holidaySourceRank(b.source, preferLocalized),
   );
   const result = [];
   for (const holiday of sorted) {
@@ -645,7 +741,7 @@ app.get("/api/regions/:countryCode", async (req, res) => {
     return;
   }
 
-  const cacheKey = `regions-geo-${countryCode}`;
+  const cacheKey = `regions-geo-v2-${countryCode}`;
   const cached = getCached(cacheKey);
   if (cached) {
     res.json(cached);
@@ -658,7 +754,9 @@ app.get("/api/regions/:countryCode", async (req, res) => {
       type: "FeatureCollection",
       features: enrichBoundaryFeatures(geo),
     };
-    setCache(cacheKey, enriched);
+    if (enriched.features.length > 0) {
+      setCache(cacheKey, enriched);
+    }
     res.json(enriched);
   } catch (err) {
     console.error(err);
@@ -674,7 +772,7 @@ app.get("/api/cities/:countryCode", async (req, res) => {
     return;
   }
 
-  const cacheKey = `cities-geo-${countryCode}`;
+  const cacheKey = `cities-geo-v2-${countryCode}`;
   const cached = getCached(cacheKey);
   if (cached) {
     res.json(cached);
@@ -687,7 +785,9 @@ app.get("/api/cities/:countryCode", async (req, res) => {
       type: "FeatureCollection",
       features: enrichBoundaryFeatures(geo),
     };
-    setCache(cacheKey, enriched);
+    if (enriched.features.length > 0) {
+      setCache(cacheKey, enriched);
+    }
     res.json(enriched);
   } catch (err) {
     console.error(err);
@@ -698,6 +798,7 @@ app.get("/api/cities/:countryCode", async (req, res) => {
 app.get("/api/holidays/:countryCode", async (req, res) => {
   const countryCode = String(req.params.countryCode).toUpperCase();
   const year = Number(req.query.year) || new Date().getFullYear();
+  const lang = parseAppLang(req.query.lang);
 
   if (!/^[A-Z]{2}$/.test(countryCode)) {
     res.status(400).json({ error: "invalid_country_code" });
@@ -705,7 +806,13 @@ app.get("/api/holidays/:countryCode", async (req, res) => {
   }
 
   try {
-    const cacheKey = `holidays-v2-${countryCode}-${year}${process.env.CALENDARIFIC_API_KEY ? "-cal" : ""}`;
+    const sourceTags = [
+      process.env.FESTIVO_API_KEY ? "festivo" : "",
+      process.env.CALENDARIFIC_API_KEY ? "cal" : "",
+    ]
+      .filter(Boolean)
+      .join("+");
+    const cacheKey = `holidays-v4-${countryCode}-${year}-${lang}${sourceTags ? `-${sourceTags}` : ""}`;
     const cached = getCached(cacheKey);
     if (cached) {
       res.json(cached);
@@ -717,11 +824,36 @@ app.get("/api/holidays/:countryCode", async (req, res) => {
       const data = await fetchNager(`/PublicHolidays/${year}/${countryCode}`);
       nagerItems = data.map((h) => ({ ...h, source: "nager" }));
     } catch (err) {
-      if (!process.env.CALENDARIFIC_API_KEY) throw err;
+      if (
+        !process.env.CALENDARIFIC_API_KEY &&
+        !process.env.FESTIVO_API_KEY
+      ) {
+        throw err;
+      }
       console.warn(`Nager holidays ${countryCode}:`, err.message);
     }
 
     let merged = nagerItems;
+    const preferLocalized = lang !== "en";
+
+    const festivoKey = process.env.FESTIVO_API_KEY;
+    if (festivoKey) {
+      try {
+        const festivoItems = await fetchFestivo(
+          festivoKey,
+          countryCode,
+          year,
+          lang,
+        );
+        merged = dedupeHolidays(
+          [...merged, ...festivoItems],
+          preferLocalized,
+        );
+      } catch (err) {
+        console.warn(`Festivo ${countryCode}:`, err.message);
+      }
+    }
+
     const calendarificKey = process.env.CALENDARIFIC_API_KEY;
     if (calendarificKey) {
       try {
@@ -729,8 +861,9 @@ app.get("/api/holidays/:countryCode", async (req, res) => {
           calendarificKey,
           countryCode,
           year,
+          lang,
         );
-        merged = dedupeHolidays([...nagerItems, ...calItems]);
+        merged = dedupeHolidays([...merged, ...calItems], preferLocalized);
       } catch (err) {
         console.warn(`Calendarific ${countryCode}:`, err.message);
       }
@@ -761,6 +894,8 @@ app.get("/api/events/:countryCode", async (req, res) => {
   const year = new Date().getFullYear();
   const from = String(req.query.from || `${year}-01-01`);
   const to = String(req.query.to || `${year}-12-31`);
+  const lang = parseAppLang(req.query.lang);
+  const tmLocale = TICKETMASTER_LOCALE[lang] ?? "en-us";
 
   const sourceTag = [
     ticketmasterKey ? "tm" : "",
@@ -772,7 +907,7 @@ app.get("/api/events/:countryCode", async (req, res) => {
     .join("+");
 
   try {
-    const cacheKey = `events-v7-${countryCode}-${categories.join("-")}-${from}-${to}-${sourceTag}`;
+    const cacheKey = `events-v9-${countryCode}-${categories.join("-")}-${from}-${to}-${lang}-${sourceTag}`;
     const cached = getCached(cacheKey);
     if (cached) {
       res.json(cached);
@@ -785,6 +920,7 @@ app.get("/api/events/:countryCode", async (req, res) => {
         ticketmasterKey,
         countryCode,
         categories,
+        tmLocale,
       );
     }
     if (seatgeekId) {
@@ -820,6 +956,8 @@ app.get("/api/events/:countryCode", async (req, res) => {
       events = dedupeEvents([...events, ...eventbriteEvents]);
     }
 
+    events = applyEventInterest(events);
+
     const ttl = events.length === 0 ? 5 * 60 * 1000 : CACHE_TTL_MS;
     setCache(cacheKey, events, ttl);
     res.json(events);
@@ -833,6 +971,7 @@ app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     sources: {
+      festivo: Boolean(process.env.FESTIVO_API_KEY),
       calendarific: Boolean(process.env.CALENDARIFIC_API_KEY),
       ticketmaster: Boolean(process.env.TICKETMASTER_API_KEY),
       seatgeek: Boolean(process.env.SEATGEEK_CLIENT_ID),
@@ -875,6 +1014,7 @@ app.get("/api/geocode/reverse", async (req, res) => {
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`API listening on http://127.0.0.1:${PORT}`);
   console.log("Data sources configured:", {
+    festivo: Boolean(process.env.FESTIVO_API_KEY),
     calendarific: Boolean(process.env.CALENDARIFIC_API_KEY),
     ticketmaster: Boolean(process.env.TICKETMASTER_API_KEY),
     seatgeek: Boolean(process.env.SEATGEEK_CLIENT_ID),

@@ -1,4 +1,4 @@
-# Sunny Atlas — Global Holidays Map
+# FestSeekr — Global festivals, holidays & events
 
 Interactive world map for exploring public holidays by country. Built with Vite, React, MapLibre GL, deck.gl, and Nager.Date.
 
@@ -36,13 +36,13 @@ docker run --rm -p 8080:80 sunny-atlas
 - Near me (geolocation), watchlist, trip planner
 - World heatmap by holiday density
 - Ticketmaster + SeatGeek + API-Football football fixtures (optional API keys; free API-Football tier uses 2022–2024 seasons)
-- Calendarific holidays merged with Nager.Date (optional CALENDARIFIC_API_KEY)
+- Festivo + Calendarific holidays merged with Nager.Date (optional `FESTIVO_API_KEY`, `CALENDARIFIC_API_KEY`)
 
 ## API routes
 
 | Route | Description |
 |-------|-------------|
 | GET /api/countries | Available countries (Nager.Date) |
-| GET /api/holidays/:code?year= | Public holidays (Nager.Date + Calendarific if key set) |
+| GET /api/holidays/:code?year=&lang= | Public holidays (Nager + Festivo + Calendarific if keys set) |
 | GET /api/holidays/heatmap?year=&from=&to= | Holiday counts by country |
 | GET /api/events/:code?from=&to= | Ticketmaster, SeatGeek, API-Football (if keys set) |

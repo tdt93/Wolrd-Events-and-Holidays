@@ -1,39 +1,53 @@
+import type { AppLanguage } from "../hooks/useSettings";
 import type { HolidayType, NagerHoliday } from "../types/event";
 import { getPrimaryHolidayType } from "./categories";
+import { t, tf } from "./locale";
 
-const TYPE_SUMMARY: Record<HolidayType, string> = {
-  Public: "A public holiday — typically a day off for schools and many workplaces.",
-  Bank: "A bank holiday when banks and some businesses close.",
-  School: "A school holiday or break for students and staff.",
-  Observance: "A cultural or religious observance — not always a day off work.",
-  Optional: "An optional holiday that employers may choose to observe.",
-  Authorities: "A holiday observed by government and public authorities.",
+const TYPE_DESC_KEY: Record<HolidayType, string> = {
+  Public: "descTypePublic",
+  Bank: "descTypeBank",
+  School: "descTypeSchool",
+  Observance: "descTypeObservance",
+  Optional: "descTypeOptional",
+  Authorities: "descTypeAuthorities",
+};
+
+const EVENT_CAT_DESC_KEY: Record<string, string> = {
+  music: "descCatMusic",
+  festival: "descCatFestival",
+  sports: "descCatSports",
+  arts: "descCatArts",
+  community: "descCatCommunity",
+  other: "descCatOther",
 };
 
 export function buildHolidayDescription(
   h: NagerHoliday,
-  countryName?: string,
+  countryName: string | undefined,
+  lang: AppLanguage,
 ): string {
   const primary = getPrimaryHolidayType(h.types ?? []);
   const parts: string[] = [];
 
   if (h.localName && h.localName !== h.name) {
-    parts.push(`Locally known as “${h.localName}”.`);
+    parts.push(tf("descLocallyKnown", lang, { name: h.localName }));
   }
 
   if (h.global) {
     parts.push(
       countryName
-        ? `Observed across ${countryName}.`
-        : "Observed nationwide.",
+        ? tf("descObservedAcross", lang, { country: countryName })
+        : t("descObservedNationwide", lang),
     );
   } else if (h.counties?.length) {
     parts.push(
-      `Regional holiday — applies in ${h.counties.length} area${h.counties.length > 1 ? "s" : ""}.`,
+      h.counties.length === 1
+        ? t("descRegionalArea", lang)
+        : tf("descRegionalAreas", lang, { count: h.counties.length }),
     );
   }
 
-  parts.push(TYPE_SUMMARY[primary]);
+  parts.push(t(TYPE_DESC_KEY[primary], lang));
 
   return parts.join(" ");
 }
@@ -41,6 +55,7 @@ export function buildHolidayDescription(
 export function buildEventDescription(
   title: string,
   category: string,
+  lang: AppLanguage,
   city?: string,
   venue?: string,
   info?: string,
@@ -49,19 +64,11 @@ export function buildEventDescription(
   if (cleaned) return cleaned;
 
   const place = [venue, city].filter(Boolean).join(", ");
-  const catLabels: Record<string, string> = {
-    music: "Live music",
-    festival: "Festival",
-    sports: "Sports",
-    arts: "Arts & culture",
-    community: "Community",
-    other: "Event",
-  };
-  const label = catLabels[category] ?? "Event";
+  const label = t(EVENT_CAT_DESC_KEY[category] ?? "descCatOther", lang);
 
   if (place) {
-    return `${label} at ${place}.`;
+    return tf("descAtPlace", lang, { category: label, place });
   }
 
-  return `${label}: ${title}.`;
+  return tf("descNamed", lang, { category: label, title });
 }

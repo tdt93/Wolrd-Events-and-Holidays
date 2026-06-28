@@ -7,6 +7,7 @@ import centroid from "@turf/centroid";
 import type { Feature, FeatureCollection, Geometry, Point } from "geojson";
 import type { MapEvent } from "../types/event";
 import type { SelectedCountry } from "../hooks/useMapSelection";
+import { findRegionFeature } from "../lib/regions";
 import {
   COUNTRY_GEOJSON_URL,
   DEFAULT_CENTER,
@@ -16,9 +17,17 @@ import {
 } from "../lib/mapConfig";
 import { LAND_FILL_COLOR, MINIMAL_MAP_STYLE } from "../lib/mapStyle";
 import { resolveCountryCode, iso2ToName } from "../lib/iso";
-import { countryNameInLang } from "../lib/locale";
+import { countryNameInLang, t } from "../lib/locale";
+import { eventPrimaryTitle } from "../lib/eventDisplay";
+import { formatDisplayDate } from "../lib/geocode";
 import type { AppLanguage } from "../hooks/useSettings";
-import { createEventMarkerElement } from "../lib/markerIcons";
+import { createClusterMarkerElement, createEventMarkerElement } from "../lib/markerIcons";
+import {
+  buildEventClusterIndex,
+  mapBounds,
+  type ClusterPointProps,
+  type EventPointProps,
+} from "../lib/mapClusters";
 
 const SOURCE_ID = "countries";
 const LABEL_SOURCE = "country-labels";
@@ -56,6 +65,10 @@ function setBoundaryData(
 interface WorldMapProps {
   isGlobe: boolean;
   selectedCountry: SelectedCountry | null;
+  selectedRegion: string | null;
+  onRegionSelect: (region: string | null) => void;
+  regionGeo: FeatureCollection;
+  cityGeo: FeatureCollection;
   hoveredCode: string | null;
   onHover: (code: string | null) => void;
   onSelect: (country: SelectedCountry) => void;
@@ -63,6 +76,7 @@ interface WorldMapProps {
   heatmapCounts: Record<string, number>;
   showHeatmap: boolean;
   showCountryNames: boolean;
+  regionsLoading?: boolean;
   language: AppLanguage;
 }
 
@@ -71,6 +85,10 @@ interface MapTooltip {
   y: number;
   title: string;
   body: string;
+  date?: string;
+  url?: string;
+  imageUrl?: string;
+  pinned: boolean;
 }
 
 function enrichGeoJson(geo: FeatureCollection): FeatureCollection {
@@ -165,6 +183,10 @@ function refreshMapView(map: maplibregl.Map) {
 export function WorldMap({
   isGlobe,
   selectedCountry,
+  selectedRegion,
+  onRegionSelect,
+  regionGeo,
+  cityGeo,
   hoveredCode,
   onHover,
   onSelect,
@@ -172,20 +194,30 @@ export function WorldMap({
   heatmapCounts,
   showHeatmap,
   showCountryNames,
+  regionsLoading = false,
   language,
 }: WorldMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const geoRef = useRef<FeatureCollection | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
+  const clusterIndexRef = useRef<
+    import("supercluster").default<EventPointProps, ClusterPointProps> | null
+  >(null);
+  const eventsByIdRef = useRef<Map<string, MapEvent>>(new Map());
   const layersReadyRef = useRef(false);
   const interactionsReadyRef = useRef(false);
   const isGlobeRef = useRef(isGlobe);
   const languageRef = useRef(language);
+  const onRegionSelectRef = useRef(onRegionSelect);
+  const selectedRegionRef = useRef(selectedRegion);
+  const lastFitCountryRef = useRef<string | null>(null);
   const [tooltip, setTooltip] = useState<MapTooltip | null>(null);
 
   isGlobeRef.current = isGlobe;
   languageRef.current = language;
+  onRegionSelectRef.current = onRegionSelect;
+  selectedRegionRef.current = selectedRegion;
 
   const updateCountryPaint = useCallback(
     (map: maplibregl.Map) => {
@@ -229,15 +261,82 @@ export function WorldMap({
       ]);
 
       map.setPaintProperty(LINE_LAYER, "line-width", [
-        "case",
-        ["==", ["get", "iso2"], selected],
-        2,
-        ["==", ["get", "iso2"], hovered],
-        1.5,
-        0.75,
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        1,
+        [
+          "case",
+          ["==", ["get", "iso2"], selected],
+          2.4,
+          ["==", ["get", "iso2"], hovered],
+          1.8,
+          1.1,
+        ],
+        4,
+        [
+          "case",
+          ["==", ["get", "iso2"], selected],
+          3.2,
+          ["==", ["get", "iso2"], hovered],
+          2.4,
+          1.6,
+        ],
+        8,
+        [
+          "case",
+          ["==", ["get", "iso2"], selected],
+          4,
+          ["==", ["get", "iso2"], hovered],
+          3,
+          2.4,
+        ],
       ]);
     },
     [selectedCountry?.code, hoveredCode, heatmapCounts, showHeatmap],
+  );
+
+  const updateRegionPaint = useCallback(
+    (map: maplibregl.Map, region: string | null) => {
+      if (!layersReadyRef.current || !map.getLayer(REGION_FILL)) return;
+
+      const sel = region ?? "";
+      const hasSelection = Boolean(sel);
+
+      map.setPaintProperty(REGION_FILL, "fill-color", [
+        "case",
+        ["==", ["get", "name"], sel],
+        "#7dd3fc",
+        "#e2e8f0",
+      ]);
+
+      map.setPaintProperty(REGION_FILL, "fill-opacity", [
+        "case",
+        ["==", ["get", "name"], sel],
+        0.5,
+        hasSelection ? 0.1 : 0.24,
+      ]);
+
+      map.setPaintProperty(REGION_LINE, "line-color", [
+        "case",
+        ["==", ["get", "name"], sel],
+        "#0284c7",
+        "#64748b",
+      ]);
+
+      map.setPaintProperty(REGION_LINE, "line-width", [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        2,
+        ["case", ["==", ["get", "name"], sel], 2.2, 1],
+        5,
+        ["case", ["==", ["get", "name"], sel], 2.8, 1.4],
+        8,
+        ["case", ["==", ["get", "name"], sel], 3.2, 2],
+      ]);
+    },
+    [],
   );
 
   const applyHeatmapCounts = useCallback(
@@ -262,32 +361,18 @@ export function WorldMap({
     [heatmapCounts],
   );
 
-  const loadRegions = useCallback((map: maplibregl.Map, countryCode: string) => {
-    if (!map.getSource(REGION_SOURCE)) return;
+  const applyRegionGeo = useCallback(
+    (map: maplibregl.Map, geo: FeatureCollection, region: string | null) => {
+      if (!map.getSource(REGION_SOURCE)) return;
+      setBoundaryData(map, REGION_SOURCE, geo);
+      updateRegionPaint(map, region);
+    },
+    [updateRegionPaint],
+  );
 
-    fetch(`/api/regions/${countryCode}`)
-      .then((r) => r.json())
-      .then((geo: FeatureCollection) => setBoundaryData(map, REGION_SOURCE, geo))
-      .catch(() =>
-        setBoundaryData(map, REGION_SOURCE, {
-          type: "FeatureCollection",
-          features: [],
-        }),
-      );
-  }, []);
-
-  const loadCities = useCallback((map: maplibregl.Map, countryCode: string) => {
+  const applyCityGeo = useCallback((map: maplibregl.Map, geo: FeatureCollection) => {
     if (!map.getSource(CITY_SOURCE)) return;
-
-    fetch(`/api/cities/${countryCode}`)
-      .then((r) => r.json())
-      .then((geo: FeatureCollection) => setBoundaryData(map, CITY_SOURCE, geo))
-      .catch(() =>
-        setBoundaryData(map, CITY_SOURCE, {
-          type: "FeatureCollection",
-          features: [],
-        }),
-      );
+    setBoundaryData(map, CITY_SOURCE, geo);
   }, []);
 
   const applyProjectionMode = useCallback((map: maplibregl.Map, globe: boolean) => {
@@ -386,7 +471,17 @@ export function WorldMap({
         source: SOURCE_ID,
         paint: {
           "line-color": "#64748b",
-          "line-width": 0.85,
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            1,
+            1.1,
+            4,
+            1.6,
+            8,
+            2.4,
+          ],
           "line-opacity": 0.95,
         },
       });
@@ -396,10 +491,10 @@ export function WorldMap({
         id: REGION_FILL,
         type: "fill",
         source: REGION_SOURCE,
-        minzoom: 3,
+        minzoom: 2,
         paint: {
           "fill-color": "#e2e8f0",
-          "fill-opacity": 0.2,
+          "fill-opacity": 0.28,
         },
       });
 
@@ -407,23 +502,33 @@ export function WorldMap({
         id: REGION_LINE,
         type: "line",
         source: REGION_SOURCE,
-        minzoom: 3,
+        minzoom: 2,
         paint: {
-          "line-color": "#94a3b8",
-          "line-width": 1.2,
-          "line-opacity": 0.8,
+          "line-color": "#64748b",
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            2,
+            1.2,
+            5,
+            1.8,
+            8,
+            2.4,
+          ],
+          "line-opacity": 0.9,
         },
       });
 
-      // City / county grids (finer detail when zoomed in)
+      // County / district grids (ADM2)
       targetMap.addLayer({
         id: CITY_FILL,
         type: "fill",
         source: CITY_SOURCE,
-        minzoom: 5,
+        minzoom: 4,
         paint: {
           "fill-color": "#cbd5e1",
-          "fill-opacity": 0.12,
+          "fill-opacity": 0.08,
         },
       });
 
@@ -431,12 +536,22 @@ export function WorldMap({
         id: CITY_LINE,
         type: "line",
         source: CITY_SOURCE,
-        minzoom: 5,
+        minzoom: 4,
         paint: {
-          "line-color": "#64748b",
-          "line-width": 0.8,
-          "line-opacity": 0.6,
-          "line-dasharray": [2, 3],
+          "line-color": "#94a3b8",
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            4,
+            0.7,
+            8,
+            1.2,
+            11,
+            1.6,
+          ],
+          "line-opacity": 0.75,
+          "line-dasharray": [2, 2],
         },
       });
 
@@ -444,7 +559,7 @@ export function WorldMap({
         id: REGION_LABEL,
         type: "symbol",
         source: REGION_SOURCE,
-        minzoom: 4,
+        minzoom: 3,
         layout: {
           "text-field": ["get", "name"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 7, 13],
@@ -657,44 +772,140 @@ export function WorldMap({
     const wrap = containerRef.current;
     if (!map || !wrap) return;
 
+    const { index, byId } = buildEventClusterIndex(events);
+    clusterIndexRef.current = index;
+    eventsByIdRef.current = byId;
+
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
 
-    const visible = events;
+    const pinnedRef = { id: null as string | null };
 
-    for (const event of visible) {
-      if (event.lat == null || event.lng == null) continue;
+    const clearTip = () => {
+      pinnedRef.id = null;
+      setTooltip(null);
+    };
 
-      const el = createEventMarkerElement(event);
+    const onWrapClick = () => clearTip();
+    wrap.addEventListener("click", onWrapClick);
 
-      const showTip = (clientX: number, clientY: number) => {
-        const rect = wrap.getBoundingClientRect();
-        setTooltip({
-          x: clientX - rect.left,
-          y: clientY - rect.top,
-          title: event.localTitle || event.title,
-          body: event.description || event.startDate,
-        });
-      };
+    const showEventTip = (
+      event: MapEvent,
+      clientX: number,
+      clientY: number,
+      pin = false,
+    ) => {
+      const rect = wrap.getBoundingClientRect();
+      if (pin) pinnedRef.id = event.id;
+      setTooltip({
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+        title: eventPrimaryTitle(event, languageRef.current),
+        body: event.description || "",
+        date: event.startDate,
+        url: event.url,
+        imageUrl: event.imageUrl,
+        pinned: pin,
+      });
+    };
 
-      el.addEventListener("mouseenter", (ev) =>
-        showTip(ev.clientX, ev.clientY),
-      );
-      el.addEventListener("mousemove", (ev) => showTip(ev.clientX, ev.clientY));
-      el.addEventListener("mouseleave", () => setTooltip(null));
+    const bindEventMarker = (event: MapEvent, el: HTMLButtonElement) => {
+      el.addEventListener("mouseenter", (ev) => {
+        if (pinnedRef.id && pinnedRef.id !== event.id) return;
+        showEventTip(event, ev.clientX, ev.clientY);
+      });
+      el.addEventListener("mousemove", (ev) => {
+        if (pinnedRef.id && pinnedRef.id !== event.id) return;
+        showEventTip(event, ev.clientX, ev.clientY);
+      });
+      el.addEventListener("mouseleave", () => {
+        if (pinnedRef.id === event.id) return;
+        setTooltip(null);
+      });
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (pinnedRef.id === event.id) {
+          clearTip();
+        } else {
+          showEventTip(event, ev.clientX, ev.clientY, true);
+        }
+      });
       el.addEventListener("focus", () => {
         const rect = el.getBoundingClientRect();
-        showTip(rect.left + rect.width / 2, rect.top);
+        showEventTip(event, rect.left + rect.width / 2, rect.top, true);
       });
-      el.addEventListener("blur", () => setTooltip(null));
+      el.addEventListener("blur", () => {
+        if (pinnedRef.id === event.id) clearTip();
+      });
+    };
 
-      const marker = new maplibregl.Marker({ element: el, anchor: "center" })
-        .setLngLat([event.lng, event.lat])
-        .addTo(map);
-      markersRef.current.push(marker);
-    }
+    let renderTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const renderMarkers = () => {
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
+
+      const clusterIndex = clusterIndexRef.current;
+      if (!clusterIndex) return;
+
+      const bounds = mapBounds(map);
+      const zoom = Math.floor(map.getZoom());
+      const features = clusterIndex.getClusters(bounds, zoom);
+
+      for (const feature of features) {
+        const [lng, lat] = feature.geometry.coordinates as [number, number];
+        const props = feature.properties as EventPointProps &
+          ClusterPointProps & { cluster?: boolean };
+
+        if (props.cluster) {
+          const el = createClusterMarkerElement(props.point_count);
+          el.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const expansionZoom = clusterIndex.getClusterExpansionZoom(
+              props.cluster_id,
+            );
+            map.easeTo({
+              center: [lng, lat],
+              zoom: Math.min(expansionZoom + 0.5, 16),
+              duration: 480,
+            });
+          });
+          markersRef.current.push(
+            new maplibregl.Marker({ element: el, anchor: "center" })
+              .setLngLat([lng, lat])
+              .addTo(map),
+          );
+          continue;
+        }
+
+        const event = eventsByIdRef.current.get(props.id);
+        if (!event) continue;
+
+        const el = createEventMarkerElement(event);
+        bindEventMarker(event, el);
+        markersRef.current.push(
+          new maplibregl.Marker({ element: el, anchor: "bottom" })
+            .setLngLat([lng, lat])
+            .addTo(map),
+        );
+      }
+    };
+
+    const scheduleRenderMarkers = () => {
+      if (renderTimer) window.clearTimeout(renderTimer);
+      renderTimer = window.setTimeout(renderMarkers, 60);
+    };
+
+    const onMapMove = () => scheduleRenderMarkers();
+    map.on("moveend", onMapMove);
+    map.on("zoomend", onMapMove);
+    scheduleRenderMarkers();
 
     return () => {
+      if (renderTimer) window.clearTimeout(renderTimer);
+      wrap.removeEventListener("click", onWrapClick);
+      map.off("moveend", onMapMove);
+      map.off("zoomend", onMapMove);
       markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
     };
@@ -704,8 +915,8 @@ export function WorldMap({
     const map = mapRef.current;
     if (!map) return;
 
-    if (!selectedCountry?.code) {
-      safeMapOp(map, (m) => {
+    safeMapOp(map, (m) => {
+      if (!selectedCountry?.code) {
         setBoundaryData(m, REGION_SOURCE, {
           type: "FeatureCollection",
           features: [],
@@ -714,36 +925,76 @@ export function WorldMap({
           type: "FeatureCollection",
           features: [],
         });
-      });
-      return;
-    }
+        return;
+      }
 
-    safeMapOp(map, (m) => {
-      loadRegions(m, selectedCountry.code);
-      loadCities(m, selectedCountry.code);
+      applyRegionGeo(m, regionGeo, selectedRegion);
+      applyCityGeo(m, cityGeo);
     });
-  }, [selectedCountry?.code, loadRegions, loadCities]);
+  }, [
+    selectedCountry?.code,
+    regionGeo,
+    cityGeo,
+    selectedRegion,
+    applyRegionGeo,
+    applyCityGeo,
+  ]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selectedCountry?.code) return;
+    if (!map || !layersReadyRef.current || !selectedCountry?.code) return;
 
-    const onZoom = () => {
-      if (map.getZoom() >= 5) {
-        loadCities(map, selectedCountry.code);
+    const onRegionClick = (
+      e: maplibregl.MapMouseEvent & {
+        features?: maplibregl.MapGeoJSONFeature[];
+      },
+    ) => {
+      const feature = e.features?.[0];
+      const name = feature?.properties?.name as string | undefined;
+      if (!name) return;
+      e.originalEvent.stopPropagation();
+      const current = selectedRegionRef.current;
+      onRegionSelectRef.current(current === name ? null : name);
+    };
+
+    const onRegionMove = (
+      e: maplibregl.MapMouseEvent & {
+        features?: maplibregl.MapGeoJSONFeature[];
+      },
+    ) => {
+      if (e.features?.length) {
+        map.getCanvas().style.cursor = "pointer";
       }
     };
 
-    map.on("zoomend", onZoom);
-    return () => {
-      map.off("zoomend", onZoom);
+    const onRegionLeave = () => {
+      map.getCanvas().style.cursor = "";
     };
-  }, [selectedCountry?.code, loadCities]);
+
+    map.on("click", REGION_FILL, onRegionClick);
+    map.on("mousemove", REGION_FILL, onRegionMove);
+    map.on("mouseleave", REGION_FILL, onRegionLeave);
+
+    return () => {
+      map.off("click", REGION_FILL, onRegionClick);
+      map.off("mousemove", REGION_FILL, onRegionMove);
+      map.off("mouseleave", REGION_FILL, onRegionLeave);
+    };
+  }, [selectedCountry?.code]);
 
   useEffect(() => {
-    if (!selectedCountry?.bbox) return;
+    safeMapOp(mapRef.current, (m) =>
+      updateRegionPaint(m, selectedRegion),
+    );
+  }, [selectedRegion, updateRegionPaint]);
+
+  useEffect(() => {
+    if (!selectedCountry?.bbox || selectedRegion) return;
     const map = mapRef.current;
     if (!map || !map.loaded()) return;
+    if (lastFitCountryRef.current === selectedCountry.code) return;
+
+    lastFitCountryRef.current = selectedCountry.code;
 
     safeMapOp(map, (m) => {
       m.fitBounds(
@@ -753,23 +1004,94 @@ export function WorldMap({
         ],
         {
           padding: 48,
-          duration: 850,
+          duration: 420,
           maxZoom: fitMaxZoom(selectedCountry.bbox!),
         },
       );
     });
-  }, [selectedCountry]);
+  }, [selectedCountry?.code, selectedCountry?.bbox, selectedRegion]);
+
+  useEffect(() => {
+    if (!selectedCountry?.code) {
+      lastFitCountryRef.current = null;
+    }
+  }, [selectedCountry?.code]);
+
+  useEffect(() => {
+    if (!selectedRegion || !selectedCountry?.code) return;
+    const map = mapRef.current;
+    if (!map || !map.loaded()) return;
+
+    const feature = findRegionFeature(regionGeo, selectedRegion);
+    if (!feature) return;
+
+    const box = bbox(feature) as [number, number, number, number];
+    safeMapOp(map, (m) => {
+      m.fitBounds(
+        [
+          [box[0], box[1]],
+          [box[2], box[3]],
+        ],
+        {
+          padding: 48,
+          duration: 420,
+          maxZoom: fitMaxZoom(box),
+        },
+      );
+    });
+  }, [selectedRegion, regionGeo, selectedCountry?.code]);
 
   return (
-    <div className="world-map-wrap">
+    <div className="world-map-wrap" id="main-map">
       <div ref={containerRef} className="world-map" aria-label="World map" />
+      {selectedCountry && regionsLoading && (
+        <div
+          className="map-country-loading"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <div className="map-country-loading__note">
+            <span className="loading-dots loading-dots--inline" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+            <span>{t("regionsLoading", language)}</span>
+          </div>
+        </div>
+      )}
       {tooltip && (
         <div
-          className="map-tooltip"
-          style={{ left: tooltip.x + 12, top: tooltip.y + 12 }}
+          className={`map-tooltip${tooltip.pinned ? " map-tooltip--pinned" : ""}`}
+          style={{ left: tooltip.x + 12, top: tooltip.y - 8 }}
+          onClick={(e) => e.stopPropagation()}
+          role={tooltip.pinned ? "dialog" : "tooltip"}
+          aria-label={tooltip.title}
         >
+          {tooltip.imageUrl && (
+            <img
+              className="map-tooltip__image"
+              src={tooltip.imageUrl}
+              alt=""
+              loading="lazy"
+            />
+          )}
           <strong>{tooltip.title}</strong>
+          {tooltip.date && (
+            <p className="map-tooltip__date">{formatDisplayDate(tooltip.date)}</p>
+          )}
           {tooltip.body && <p>{tooltip.body}</p>}
+          {tooltip.url && (
+            <a
+              href={tooltip.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="map-tooltip__link"
+            >
+              View event →
+            </a>
+          )}
         </div>
       )}
     </div>

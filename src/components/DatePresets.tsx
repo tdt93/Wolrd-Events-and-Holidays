@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import type { DatePreset } from "../types/event";
 import type { AppLanguage } from "../hooks/useSettings";
 import { t } from "../lib/locale";
+import { DateField } from "./DateField";
 
 const DATE_PRESET_STYLE = {
   "--chip-bg": "#fef3c7",
@@ -66,27 +67,19 @@ export function DatePresets({
       </div>
 
       <div className="date-range-row">
-        <label className="date-field">
-          <span className="date-field__label">{t("from", language)}</span>
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => onCustomRange(e.target.value, to)}
-            aria-label={t("from", language)}
-          />
-        </label>
+        <DateField
+          label={t("from", language)}
+          value={from}
+          onChange={(iso) => onCustomRange(iso, to)}
+        />
         <span className="date-range-arrow" aria-hidden="true">
           →
         </span>
-        <label className="date-field">
-          <span className="date-field__label">{t("to", language)}</span>
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => onCustomRange(from, e.target.value)}
-            aria-label={t("to", language)}
-          />
-        </label>
+        <DateField
+          label={t("to", language)}
+          value={to}
+          onChange={(iso) => onCustomRange(from, iso)}
+        />
       </div>
     </section>
   );

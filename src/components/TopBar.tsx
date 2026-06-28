@@ -22,9 +22,12 @@ export function TopBar({
     <header className="top-bar">
       <div className="logo">
         <span className="logo-icon" aria-hidden="true">
-          ☀️
+          🎪
         </span>
-        <span className="logo-text">{t("siteName", language)}</span>
+        <div className="logo-text-wrap">
+          <span className="logo-text">{t("siteName", language)}</span>
+          <span className="logo-tagline">{t("siteTagline", language)}</span>
+        </div>
       </div>
       <div className="search-wrap">
         <input
@@ -37,7 +40,7 @@ export function TopBar({
       </div>
       <button
         type="button"
-        className="btn-secondary near-me"
+        className="filter-chip filter-chip--on filter-chip--action near-me-chip"
         onClick={onNearMe}
         disabled={locating}
       >

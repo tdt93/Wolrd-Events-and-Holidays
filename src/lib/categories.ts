@@ -1,4 +1,4 @@
-import type { EventCategory, HolidayType } from "../types/event";
+import type { EventCategory, HolidayType, SportSubcategory } from "../types/event";
 
 export interface CategoryStyle {
   id: HolidayType;
@@ -72,6 +72,26 @@ export const ALL_HOLIDAY_TYPES: HolidayType[] = HOLIDAY_CATEGORIES.map(
 export const ALL_EVENT_CATEGORIES: EventCategory[] = EVENT_CATEGORIES.map(
   (c) => c.id,
 );
+
+export const SPORTS_SUBCATEGORIES: {
+  id: SportSubcategory;
+  label: string;
+  icon: string;
+  bg: string;
+  border: string;
+}[] = [
+  { id: "football", label: "Football / Soccer", icon: "⚽", bg: "#dcfce7", border: "#16a34a" },
+  { id: "basketball", label: "Basketball", icon: "🏀", bg: "#ffedd5", border: "#ea580c" },
+  { id: "american-football", label: "American Football", icon: "🏈", bg: "#dbeafe", border: "#2563eb" },
+  { id: "hockey", label: "Hockey", icon: "🏒", bg: "#e0f2fe", border: "#0284c7" },
+  { id: "baseball", label: "Baseball", icon: "⚾", bg: "#fef3c7", border: "#d97706" },
+  { id: "tennis", label: "Tennis", icon: "🎾", bg: "#ecfccb", border: "#65a30d" },
+  { id: "motorsport", label: "Motorsport", icon: "🏎️", bg: "#f1f5f9", border: "#475569" },
+  { id: "other", label: "Other sports", icon: "🏅", bg: "#f1f5f9", border: "#64748b" },
+];
+
+export const ALL_SPORT_SUBCATEGORIES: SportSubcategory[] =
+  SPORTS_SUBCATEGORIES.map((c) => c.id);
 
 export function getEventCategoryStyle(category: EventCategory) {
   return (

@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
+import type { AppLanguage } from "../hooks/useSettings";
 import type { MapEvent } from "../types/event";
 import { buildEventDescription } from "../lib/descriptions";
 import { getCountryCentroid } from "../lib/geocode";
 import { placeEventsOnMap } from "../lib/geocodePlaces";
+import {
+  sessionGet,
+  sessionSet,
+  ticketEventsCacheKey,
+} from "../lib/sessionCache";
 
 interface UseEventsOptions {
   countryCode: string | null;
@@ -12,6 +18,7 @@ interface UseEventsOptions {
   from: string;
   to: string;
   enabled: boolean;
+  language: AppLanguage;
 }
 
 export function useTicketmasterEvents({
@@ -22,6 +29,7 @@ export function useTicketmasterEvents({
   from,
   to,
   enabled,
+  language,
 }: UseEventsOptions) {
   const [events, setEvents] = useState<MapEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -33,12 +41,27 @@ export function useTicketmasterEvents({
       return;
     }
 
+    const cacheKey = ticketEventsCacheKey(
+      countryCode,
+      from,
+      to,
+      language,
+      categories,
+    );
+    const cached = sessionGet<MapEvent[]>(cacheKey);
+    if (cached) {
+      setEvents(cached);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+
     let active = true;
 
     (async () => {
-      setLoading(true);
       try {
-        const params = new URLSearchParams({ from, to });
+        const params = new URLSearchParams({ from, to, lang: language });
         if (categories.length) {
           params.set("classification", categories.join(","));
         }
@@ -61,6 +84,7 @@ export function useTicketmasterEvents({
             buildEventDescription(
               e.title,
               e.category,
+              language,
               e.city,
               e.venue,
               e.info,
@@ -76,7 +100,10 @@ export function useTicketmasterEvents({
           countryName ?? undefined,
           center,
         );
-        if (active) setEvents(placed);
+        if (active) {
+          sessionSet(cacheKey, placed);
+          setEvents(placed);
+        }
       } catch (err) {
         if (!active) return;
         console.error("Events fetch failed:", countryCode, err);
@@ -88,7 +115,7 @@ export function useTicketmasterEvents({
     return () => {
       active = false;
     };
-  }, [countryCode, countryName, centroid, categories, from, to, enabled]);
+  }, [countryCode, countryName, categories, from, to, enabled, language]);
 
   return { events, loading };
 }

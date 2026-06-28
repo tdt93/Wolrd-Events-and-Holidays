@@ -1,5 +1,6 @@
 import type { AppLanguage } from "../hooks/useSettings";
 import { t } from "../lib/locale";
+import { DateField } from "./DateField";
 
 interface TripPlannerProps {
   enabled: boolean;
@@ -43,27 +44,19 @@ export function TripPlanner({
 
       {enabled && (
         <div className="date-range-row">
-          <label className="date-field">
-            <span className="date-field__label">{t("tripDates", language)}</span>
-            <input
-              type="date"
-              value={tripFrom}
-              onChange={(e) => onTripFromChange(e.target.value)}
-              aria-label={t("tripDates", language)}
-            />
-          </label>
+          <DateField
+            label={t("tripDates", language)}
+            value={tripFrom}
+            onChange={onTripFromChange}
+          />
           <span className="date-range-arrow" aria-hidden="true">
             →
           </span>
-          <label className="date-field">
-            <span className="date-field__label">&nbsp;</span>
-            <input
-              type="date"
-              value={tripTo}
-              onChange={(e) => onTripToChange(e.target.value)}
-              aria-label={t("to", language)}
-            />
-          </label>
+          <DateField
+            label={"\u00a0"}
+            value={tripTo}
+            onChange={onTripToChange}
+          />
         </div>
       )}
     </section>

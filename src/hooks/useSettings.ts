@@ -5,13 +5,15 @@ export type AppLanguage = "en" | "de" | "fr" | "es" | "vi" | "ja";
 export interface AppSettings {
   language: AppLanguage;
   showCountryNames: boolean;
+  showKeyboardHints: boolean;
 }
 
-const STORAGE_KEY = "sunny-atlas-settings";
+const STORAGE_KEY = "festseekr-settings";
 
 const DEFAULTS: AppSettings = {
   language: "en",
   showCountryNames: true,
+  showKeyboardHints: true,
 };
 
 function loadSettings(): AppSettings {
@@ -22,6 +24,7 @@ function loadSettings(): AppSettings {
     return {
       language: parsed.language ?? DEFAULTS.language,
       showCountryNames: parsed.showCountryNames ?? DEFAULTS.showCountryNames,
+      showKeyboardHints: parsed.showKeyboardHints ?? DEFAULTS.showKeyboardHints,
     };
   } catch {
     return DEFAULTS;
@@ -43,5 +46,9 @@ export function useSettings() {
     setSettings((s) => ({ ...s, showCountryNames }));
   }, []);
 
-  return { settings, setLanguage, setShowCountryNames };
+  const setShowKeyboardHints = useCallback((showKeyboardHints: boolean) => {
+    setSettings((s) => ({ ...s, showKeyboardHints }));
+  }, []);
+
+  return { settings, setLanguage, setShowCountryNames, setShowKeyboardHints };
 }

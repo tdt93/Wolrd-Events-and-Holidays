@@ -7,7 +7,7 @@ export const LAND_FILL_COLOR = "#f1f5f9";
 /** Flat color basemap — ocean only; land comes from country GeoJSON layers */
 export const MINIMAL_MAP_STYLE: StyleSpecification = {
   version: 8,
-  name: "Sunny Atlas Flat",
+  name: "FestSeekr Flat",
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
   sources: {},
   layers: [

@@ -1,5 +1,19 @@
-import type { AppUrlState, EventCategory } from "../types/event";
+import type { AppUrlPanel, AppUrlState, EventCategory } from "../types/event";
 import { ALL_EVENT_CATEGORIES } from "./categories";
+
+const VALID_PANELS = new Set<AppUrlPanel>([
+  "events",
+  "filters",
+  "settings",
+  "about",
+]);
+
+function parsePanel(param: string | null): AppUrlPanel | undefined {
+  if (!param) return undefined;
+  return VALID_PANELS.has(param as AppUrlPanel)
+    ? (param as AppUrlPanel)
+    : undefined;
+}
 
 function parseEventCategories(
   param: string | null,
@@ -16,6 +30,7 @@ export function parseUrlState(): AppUrlState {
   const params = new URLSearchParams(window.location.search);
   const cat = params.get("cat");
   const ecat = params.get("ecat");
+  const region = params.get("region");
   return {
     country: params.get("country")?.toUpperCase() || undefined,
     from: params.get("from") || undefined,
@@ -24,22 +39,32 @@ export function parseUrlState(): AppUrlState {
     ecat: parseEventCategories(ecat),
     globe: params.get("globe") !== "0",
     nationalOnly: params.get("national") === "1",
+    region: region ? decodeURIComponent(region) : undefined,
+    panel: parsePanel(params.get("panel")),
+    event: params.get("event") || undefined,
   };
 }
 
-export function writeUrlState(state: AppUrlState): void {
+export function buildShareUrl(state: AppUrlState): string {
   const params = new URLSearchParams();
   if (state.country) params.set("country", state.country);
   if (state.from) params.set("from", state.from);
   if (state.to) params.set("to", state.to);
   if (state.cat?.length) params.set("cat", state.cat.join(","));
   if (state.ecat?.length) params.set("ecat", state.ecat.join(","));
+  if (state.region) params.set("region", state.region);
   if (state.globe === false) params.set("globe", "0");
   if (state.nationalOnly) params.set("national", "1");
-
+  if (state.panel) params.set("panel", state.panel);
+  if (state.event) params.set("event", state.event);
   const qs = params.toString();
-  const url = qs
-    ? `${window.location.pathname}?${qs}`
-    : window.location.pathname;
-  window.history.replaceState(null, "", url);
+  return qs
+    ? `${window.location.origin}${window.location.pathname}?${qs}`
+    : `${window.location.origin}${window.location.pathname}`;
+}
+
+export function writeUrlState(state: AppUrlState): void {
+  const full = buildShareUrl(state);
+  const path = full.slice(window.location.origin.length) || "/";
+  window.history.replaceState(null, "", path);
 }

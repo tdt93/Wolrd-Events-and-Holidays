@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WorldMap } from "./components/WorldMap";
 import { CountrySidebar } from "./components/CountrySidebar";
 import { CategoryFilters } from "./components/CategoryFilters";
@@ -6,7 +6,7 @@ import { GlobeToggle } from "./components/GlobeToggle";
 import { TopBar } from "./components/TopBar";
 import { DatePresets } from "./components/DatePresets";
 import { TripPlanner } from "./components/TripPlanner";
-import { SlidePanel } from "./components/SlidePanel";
+import { BottomCardPanel } from "./components/BottomCardPanel";
 import { DockButton } from "./components/DockButton";
 import { RegionPicker } from "./components/RegionPicker";
 import {
@@ -18,41 +18,56 @@ import {
   IconSettings,
 } from "./components/DockIcons";
 import { useHolidays, useCountries, useCountryHeatmap } from "./hooks/useHolidays";
+import { useCountryRegions } from "./hooks/useCountryRegions";
 import { useMapSelection } from "./hooks/useMapSelection";
 import type { SelectedCountry } from "./hooks/useMapSelection";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { useTicketmasterEvents } from "./hooks/useEvents";
-import type { DatePreset, EventCategory, HolidayType, MapEvent } from "./types/event";
+import type { DatePreset, EventCategory, HolidayType, MapEvent, SportSubcategory } from "./types/event";
 import {
   filterByDateRange,
   filterEvents,
   getDatePresetRange,
 } from "./lib/geocode";
-import { parseUrlState, writeUrlState } from "./lib/urlState";
+import { parseUrlState, writeUrlState, buildShareUrl } from "./lib/urlState";
 import { resolveCountryCode } from "./lib/iso";
 import { REPO_URL } from "./lib/config";
 import { CountryFlag } from "./components/CountryFlag";
 import { useSettings } from "./hooks/useSettings";
+import { usePanelShortcuts } from "./hooks/usePanelShortcuts";
 import {
   ALL_EVENT_CATEGORIES,
   ALL_HOLIDAY_TYPES,
+  ALL_SPORT_SUBCATEGORIES,
 } from "./lib/categories";
-import { countryNameInLang, LANGUAGE_OPTIONS, localizeCountryList, t } from "./lib/locale";
+import { countryNameInLang, LANGUAGE_OPTIONS, localizeCountryList, t, tf } from "./lib/locale";
 import "./styles/global.css";
 
 type PanelId = "filters" | "events" | "settings" | "about" | null;
+
+function initialPanelFromUrl(
+  panel: ReturnType<typeof parseUrlState>["panel"],
+  country?: string,
+  event?: string,
+): PanelId {
+  if (panel) return panel;
+  if (country || event) return "events";
+  return null;
+}
 
 export default function App() {
   const initial = parseUrlState();
   const year = new Date().getFullYear();
 
   const [isGlobe, setIsGlobe] = useState(initial.globe !== false);
-  const [datePreset, setDatePreset] = useState<DatePreset>("this-year");
+  const [datePreset, setDatePreset] = useState<DatePreset>(
+    initial.from ? "custom" : "this-month",
+  );
   const [from, setFrom] = useState(
-    initial.from ?? getDatePresetRange("this-year").from,
+    initial.from ?? getDatePresetRange("this-month").from,
   );
   const [to, setTo] = useState(
-    initial.to ?? getDatePresetRange("this-year").to,
+    initial.to ?? getDatePresetRange("this-month").to,
   );
   const [selectedTypes, setSelectedTypes] = useState<HolidayType[]>(
     (initial.cat as HolidayType[])?.length
@@ -62,6 +77,9 @@ export default function App() {
   const [selectedEventCats, setSelectedEventCats] = useState<EventCategory[]>(
     initial.ecat?.length ? initial.ecat : [...ALL_EVENT_CATEGORIES],
   );
+  const [selectedSportSubs, setSelectedSportSubs] = useState<SportSubcategory[]>([
+    ...ALL_SPORT_SUBCATEGORIES,
+  ]);
   const [nationalOnly, setNationalOnly] = useState(
     initial.nationalOnly ?? false,
   );
@@ -72,8 +90,18 @@ export default function App() {
   const [tripMode, setTripMode] = useState(false);
   const [tripFrom, setTripFrom] = useState(from);
   const [tripTo, setTripTo] = useState(to);
-  const [openPanel, setOpenPanel] = useState<PanelId>(null);
-  const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
+  const [openPanel, setOpenPanel] = useState<PanelId>(
+    initialPanelFromUrl(initial.panel, initial.country, initial.event),
+  );
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(
+    initial.event ?? null,
+  );
+  const pendingEventRef = useRef(initial.event);
+  const [selectedRegion, setSelectedRegion] = useState<string | null>(
+    initial.region ?? null,
+  );
+  const [linkCopied, setLinkCopied] = useState(false);
+  const pendingRegionRef = useRef(initial.region);
 
   const {
     selected,
@@ -85,7 +113,8 @@ export default function App() {
 
   const countries = useCountries();
   const { watchlist, toggle, isWatched } = useWatchlist();
-  const { settings, setLanguage, setShowCountryNames } = useSettings();
+  const { settings, setLanguage, setShowCountryNames, setShowKeyboardHints } =
+    useSettings();
 
   const localizedCountries = useMemo(
     () => localizeCountryList(countries, settings.language),
@@ -101,15 +130,16 @@ export default function App() {
 
   const { events: holidayEvents, loading, error } = useHolidays({
     countryCode: selected?.code ?? null,
-    countryName: selected?.name ?? null,
+    countryName: selectedDisplayName,
     year,
     centroid: selected?.centroid,
+    language: settings.language,
   });
 
   const eventRangeFrom = tripMode ? tripFrom : from;
   const eventRangeTo = tripMode ? tripTo : to;
 
-  const { events: ticketEvents } = useTicketmasterEvents({
+  const { events: ticketEvents, loading: ticketLoading } = useTicketmasterEvents({
     countryCode: selected?.code ?? null,
     countryName: selectedDisplayName,
     centroid: selected?.centroid,
@@ -117,7 +147,11 @@ export default function App() {
     from: eventRangeFrom,
     to: eventRangeTo,
     enabled: Boolean(selected?.code),
+    language: settings.language,
   });
+
+  const { geo: regionGeo, cityGeo, names: regionNames, loading: regionsLoading } =
+    useCountryRegions(selected?.code ?? null);
 
   const heatmapCounts = useCountryHeatmap(year, from, to, true);
 
@@ -132,13 +166,39 @@ export default function App() {
           name: match.name,
           centroid: [0, 20],
         });
+        if (initial.region) {
+          pendingRegionRef.current = initial.region;
+        }
+        if (initial.event) {
+          pendingEventRef.current = initial.event;
+          setExpandedEventId(initial.event);
+        }
+        setOpenPanel(initialPanelFromUrl(initial.panel, initial.country, initial.event));
       }
     }
   }, [initial.country, countries, selectCountry]);
 
+  const prevCountryRef = useRef<string | null>(null);
+
   useEffect(() => {
-    setSelectedRegion(null);
+    const code = selected?.code ?? null;
+    if (prevCountryRef.current && prevCountryRef.current !== code) {
+      setSelectedRegion(null);
+      pendingRegionRef.current = undefined;
+      setExpandedEventId(null);
+      pendingEventRef.current = undefined;
+    }
+    prevCountryRef.current = code;
   }, [selected?.code]);
+
+  useEffect(() => {
+    const pending = pendingRegionRef.current;
+    if (!pending || !selected?.code) return;
+    if (regionNames.includes(pending)) {
+      setSelectedRegion(pending);
+      pendingRegionRef.current = undefined;
+    }
+  }, [regionNames, selected?.code]);
 
   useEffect(() => {
     writeUrlState({
@@ -149,6 +209,9 @@ export default function App() {
       ecat: selectedEventCats,
       globe: isGlobe,
       nationalOnly,
+      region: selectedRegion ?? undefined,
+      panel: openPanel ?? undefined,
+      event: expandedEventId ?? undefined,
     });
   }, [
     selected,
@@ -158,6 +221,9 @@ export default function App() {
     selectedEventCats,
     isGlobe,
     nationalOnly,
+    selectedRegion,
+    openPanel,
+    expandedEventId,
   ]);
 
   useEffect(() => {
@@ -175,19 +241,75 @@ export default function App() {
         setNationalOnly(state.nationalOnly);
       }
       if (state.globe != null) setIsGlobe(state.globe);
+      if (state.region) {
+        pendingRegionRef.current = state.region;
+        setSelectedRegion(state.region);
+      } else {
+        pendingRegionRef.current = undefined;
+        setSelectedRegion(null);
+      }
+      if (state.event) {
+        pendingEventRef.current = state.event;
+        setExpandedEventId(state.event);
+      } else {
+        pendingEventRef.current = undefined;
+        setExpandedEventId(null);
+      }
+      if (state.panel) {
+        setOpenPanel(state.panel);
+      } else if (state.country || state.event) {
+        setOpenPanel("events");
+      } else {
+        setOpenPanel(null);
+      }
+      if (state.country) {
+        const match = countries.find((c) => c.countryCode === state.country);
+        if (match) {
+          selectCountry({
+            code: match.countryCode,
+            name: match.name,
+            centroid: [0, 20],
+          });
+        }
+      }
     };
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, []);
+  }, [countries, selectCountry]);
 
-  const availableRegions = useMemo(() => {
-    const set = new Set<string>();
-    for (const e of [...holidayEvents, ...ticketEvents]) {
-      if (e.region) set.add(e.region);
-      if (e.city) set.add(e.city);
+  const handleCopyShareLink = useCallback(async () => {
+    const url = buildShareUrl({
+      country: selected?.code,
+      from,
+      to,
+      cat: selectedTypes,
+      ecat: selectedEventCats,
+      globe: isGlobe,
+      nationalOnly,
+      region: selectedRegion ?? undefined,
+      panel: openPanel ?? undefined,
+      event: expandedEventId ?? undefined,
+    });
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 2200);
+    } catch {
+      window.prompt(t("copyShareLink", settings.language), url);
     }
-    return [...set].sort();
-  }, [holidayEvents, ticketEvents]);
+  }, [
+    selected?.code,
+    from,
+    to,
+    selectedTypes,
+    selectedEventCats,
+    isGlobe,
+    nationalOnly,
+    selectedRegion,
+    openPanel,
+    expandedEventId,
+    settings.language,
+  ]);
 
   const filteredEvents = useMemo(() => {
     const rangeFrom = tripMode ? tripFrom : from;
@@ -198,12 +320,19 @@ export default function App() {
       ...filterByDateRange(ticketEvents, rangeFrom, rangeTo),
     ];
 
+    if (selected?.code) {
+      merged = merged.filter((e) => e.countryCode === selected.code);
+    }
+
     merged = filterEvents(
       merged,
       selectedTypes,
       selectedEventCats,
       nationalOnly,
       selectedRegion,
+      selectedSportSubs,
+      selected?.code ?? null,
+      regionGeo,
     );
 
     if (longWeekendOnly) {
@@ -221,14 +350,18 @@ export default function App() {
     tripTo,
     selectedTypes,
     selectedEventCats,
+    selectedSportSubs,
     nationalOnly,
     longWeekendOnly,
     selectedRegion,
+    selected?.code,
+    regionGeo,
   ]);
 
   const handleClearFilters = () => {
     setSelectedTypes([...ALL_HOLIDAY_TYPES]);
     setSelectedEventCats([...ALL_EVENT_CATEGORIES]);
+    setSelectedSportSubs([...ALL_SPORT_SUBCATEGORIES]);
     setNationalOnly(false);
     setLongWeekendOnly(false);
   };
@@ -307,19 +440,35 @@ export default function App() {
     if (!code) return;
     const name =
       countryNameInLang(code, settings.language) ?? country.name;
-    handleOpenCountry(code, name);
+    selectCountry({ ...country, code, name });
+    setOpenPanel("events");
   };
 
-  const togglePanel = (id: PanelId) => {
+  const togglePanel = useCallback((id: PanelId) => {
     setOpenPanel((p) => (p === id ? null : id));
-  };
+  }, []);
+
+  usePanelShortcuts(true, {
+    onFilters: () => togglePanel("filters"),
+    onEvents: () => togglePanel("events"),
+    onHeatmap: () => setShowHeatmap((v) => !v),
+    onSettings: () => togglePanel("settings"),
+    onClose: () => setOpenPanel(null),
+  });
 
   return (
     <div className="app app--map-first">
+      <a className="skip-link" href="#main-map">
+        {t("skipToMap", settings.language)}
+      </a>
       <div className="map-stage">
         <WorldMap
           isGlobe={isGlobe}
           selectedCountry={selected}
+          selectedRegion={selectedRegion}
+          onRegionSelect={setSelectedRegion}
+          regionGeo={regionGeo}
+          cityGeo={cityGeo}
           hoveredCode={hoveredCode}
           onHover={setHoveredCode}
           onSelect={handleSelectFromMap}
@@ -327,6 +476,7 @@ export default function App() {
           heatmapCounts={heatmapCounts}
           showHeatmap={showHeatmap}
           showCountryNames={settings.showCountryNames}
+          regionsLoading={regionsLoading}
           language={settings.language}
         />
       </div>
@@ -353,6 +503,34 @@ export default function App() {
             ))}
           </ul>
         )}
+        {settings.showKeyboardHints && !openPanel && (
+          <div className="keyboard-hints-wrap">
+            <div className="keyboard-hints" role="note">
+              <span className="keyboard-hints__label">
+                {t("keyboardHintsTitle", settings.language)}
+              </span>
+              <span className="keyboard-hints__item">
+                <kbd>1</kbd> {t("dockEvents", settings.language)}
+              </span>
+              <span className="keyboard-hints__item">
+                <kbd>2</kbd> {t("dockFilters", settings.language)}
+              </span>
+              <span className="keyboard-hints__item">
+                <kbd>3</kbd> {t("dockHeatmap", settings.language)}
+              </span>
+              <span className="keyboard-hints__item">
+                <kbd>4</kbd> {t("dockSettings", settings.language)}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="keyboard-hints__hide"
+              onClick={() => setShowKeyboardHints(false)}
+            >
+              {t("hide", settings.language)}
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="float-globe">
@@ -365,27 +543,30 @@ export default function App() {
 
       <div className="float-dock">
         <DockButton
-          label={t("dockFilters", settings.language)}
-          description={t("dockFiltersDesc", settings.language)}
-          active={openPanel === "filters"}
-          onClick={() => togglePanel("filters")}
-        >
-          <IconFilter />
-        </DockButton>
-        <DockButton
           label={t("dockEvents", settings.language)}
           description={t("dockEventsDesc", settings.language)}
           active={openPanel === "events"}
           onClick={() => togglePanel("events")}
           badge={filteredEvents.length}
+          shortcut="1"
         >
           <IconList />
+        </DockButton>
+        <DockButton
+          label={t("dockFilters", settings.language)}
+          description={t("dockFiltersDesc", settings.language)}
+          active={openPanel === "filters"}
+          onClick={() => togglePanel("filters")}
+          shortcut="2"
+        >
+          <IconFilter />
         </DockButton>
         <DockButton
           label={t("dockHeatmap", settings.language)}
           description={t("dockHeatmapDesc", settings.language)}
           active={showHeatmap}
           onClick={() => setShowHeatmap((v) => !v)}
+          shortcut="3"
         >
           <IconHeatmap />
         </DockButton>
@@ -394,6 +575,7 @@ export default function App() {
           description={t("dockSettingsDesc", settings.language)}
           active={openPanel === "settings"}
           onClick={() => togglePanel("settings")}
+          shortcut="4"
         >
           <IconSettings />
         </DockButton>
@@ -416,12 +598,63 @@ export default function App() {
         </div>
       )}
 
-      <SlidePanel
+      <div className="bottom-card-stack">
+      <BottomCardPanel
+        open={openPanel === "events"}
+        onToggle={() => togglePanel("events")}
+        onClose={() => setOpenPanel(null)}
+        title={selectedDisplayName ?? t("eventsTitle", settings.language)}
+        peekTitle={
+          selectedDisplayName
+            ? tf("eventsInCountry", settings.language, {
+                country: selectedDisplayName,
+              })
+            : t("dockEvents", settings.language)
+        }
+        closeLabel={t("close", settings.language)}
+        subtitle={selectedRegion ?? undefined}
+        headerLeading={
+          selected?.code ? (
+            <CountryFlag
+              code={selected.code}
+              label={selectedDisplayName ?? selected.name}
+              size={40}
+            />
+          ) : undefined
+        }
+        stackIndex={0}
+        stackTotal={4}
+        tone="mint"
+        bodyClassName="slide-panel__body--events"
+      >
+        <CountrySidebar
+          countryName={selectedDisplayName}
+          countryCode={selected?.code ?? null}
+          events={filteredEvents}
+          loading={loading || ticketLoading}
+          error={error}
+          isWatched={selected ? isWatched(selected.code) : false}
+          onToggleWatch={() => selected && toggle(selected.code)}
+          onShareLink={handleCopyShareLink}
+          shareCopied={linkCopied}
+          expandedEventId={expandedEventId}
+          onExpandedEventChange={setExpandedEventId}
+          tripMode={tripMode}
+          tripFrom={tripFrom}
+          tripTo={tripTo}
+          language={settings.language}
+        />
+      </BottomCardPanel>
+
+      <BottomCardPanel
         open={openPanel === "filters"}
+        onToggle={() => togglePanel("filters")}
         onClose={() => setOpenPanel(null)}
         title={t("filtersDates", settings.language)}
         closeLabel={t("close", settings.language)}
-        side="left"
+        stackIndex={1}
+        stackTotal={4}
+        tone="sun"
         bodyClassName="slide-panel__body--filters"
       >
         <DatePresets
@@ -446,6 +679,8 @@ export default function App() {
           onHolidayChange={setSelectedTypes}
           selectedEvents={selectedEventCats}
           onEventChange={setSelectedEventCats}
+          selectedSportSubs={selectedSportSubs}
+          onSportSubChange={setSelectedSportSubs}
           nationalOnly={nationalOnly}
           onNationalOnlyChange={setNationalOnly}
           longWeekendOnly={longWeekendOnly}
@@ -455,11 +690,11 @@ export default function App() {
         />
         {selected && (
           <RegionPicker
-            countryCode={selected?.code ?? null}
-            regions={availableRegions}
+            regions={regionNames}
             selected={selectedRegion}
             onChange={setSelectedRegion}
             language={settings.language}
+            loading={regionsLoading}
           />
         )}
         {watchlist.length > 0 && (
@@ -484,47 +719,17 @@ export default function App() {
             </div>
           </div>
         )}
-      </SlidePanel>
+      </BottomCardPanel>
 
-      <SlidePanel
-        open={openPanel === "events"}
-        onClose={() => setOpenPanel(null)}
-        title={selectedDisplayName ?? t("eventsTitle", settings.language)}
-        closeLabel={t("close", settings.language)}
-        subtitle={selectedRegion ?? undefined}
-        headerLeading={
-          selected?.code ? (
-            <CountryFlag
-              code={selected.code}
-              label={selectedDisplayName ?? selected.name}
-              size={40}
-            />
-          ) : undefined
-        }
-        side="right"
-        bodyClassName="slide-panel__body--events"
-      >
-        <CountrySidebar
-          countryName={selectedDisplayName}
-          countryCode={selected?.code ?? null}
-          events={filteredEvents}
-          loading={loading}
-          error={error}
-          isWatched={selected ? isWatched(selected.code) : false}
-          onToggleWatch={() => selected && toggle(selected.code)}
-          tripMode={tripMode}
-          tripFrom={tripFrom}
-          tripTo={tripTo}
-          language={settings.language}
-        />
-      </SlidePanel>
-
-      <SlidePanel
+      <BottomCardPanel
         open={openPanel === "settings"}
+        onToggle={() => togglePanel("settings")}
         onClose={() => setOpenPanel(null)}
         title={t("settings", settings.language)}
         closeLabel={t("close", settings.language)}
-        side="left"
+        stackIndex={2}
+        stackTotal={4}
+        tone="sky"
       >
         <div className="settings-group filter-card">
           <label className="settings-field">
@@ -559,6 +764,14 @@ export default function App() {
             />
           </label>
           <label className="filter-toggle-row">
+            <span>{t("showKeyboardHints", settings.language)}</span>
+            <input
+              type="checkbox"
+              checked={settings.showKeyboardHints}
+              onChange={(e) => setShowKeyboardHints(e.target.checked)}
+            />
+          </label>
+          <label className="filter-toggle-row">
             <span>{t("globe", settings.language)}</span>
             <input
               type="checkbox"
@@ -567,19 +780,33 @@ export default function App() {
             />
           </label>
         </div>
-      </SlidePanel>
+      </BottomCardPanel>
 
-      <SlidePanel
+      <BottomCardPanel
         open={openPanel === "about"}
+        onToggle={() => togglePanel("about")}
         onClose={() => setOpenPanel(null)}
         title={t("aboutTitle", settings.language)}
         closeLabel={t("close", settings.language)}
-        side="left"
+        stackIndex={3}
+        stackTotal={4}
+        tone="rose"
       >
         <div className="about-panel">
           {t("aboutBody", settings.language).split("\n\n").map((paragraph) => (
             <p key={paragraph.slice(0, 24)}>{paragraph}</p>
           ))}
+          <section className="about-instructions">
+            <h3>{t("aboutInstructionsTitle", settings.language)}</h3>
+            <ul>
+              {t("aboutInstructions", settings.language)
+                .split("\n")
+                .filter(Boolean)
+                .map((line) => (
+                  <li key={line.slice(0, 32)}>{line.replace(/^[•-]\s*/, "")}</li>
+                ))}
+            </ul>
+          </section>
           <a
             href={REPO_URL}
             target="_blank"
@@ -591,7 +818,8 @@ export default function App() {
             <IconGitHub size={32} />
           </a>
         </div>
-      </SlidePanel>
+      </BottomCardPanel>
+      </div>
     </div>
   );
 }

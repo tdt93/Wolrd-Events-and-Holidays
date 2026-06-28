@@ -64,8 +64,17 @@ export function createEventMarkerSvg(event: MapEvent): string {
 export function createEventMarkerElement(event: MapEvent): HTMLButtonElement {
   const el = document.createElement("button");
   el.type = "button";
-  el.className = "map-event-marker";
+  el.className = `map-event-marker${event.featured ? " map-event-marker--featured" : ""}`;
   el.innerHTML = createEventMarkerSvg(event);
   el.setAttribute("aria-label", event.localTitle || event.title);
+  return el;
+}
+
+export function createClusterMarkerElement(count: number): HTMLButtonElement {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = "map-cluster-marker";
+  el.textContent = String(count);
+  el.setAttribute("aria-label", `${count} events`);
   return el;
 }

@@ -1,7 +1,9 @@
 import type { Feature, FeatureCollection, Point } from "geojson";
-import type { MapEvent, NagerHoliday } from "../types/event";
-import { getPrimaryHolidayType } from "./categories";
+import type { AppLanguage } from "../hooks/useSettings";
+import type { MapEvent, NagerHoliday, SportSubcategory } from "../types/event";
+import { getPrimaryHolidayType, ALL_SPORT_SUBCATEGORIES } from "./categories";
 import { buildHolidayDescription } from "./descriptions";
+import { eventPassesRegionFilter } from "./regions";
 
 const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
   US: [-98.5, 39.8],
@@ -28,8 +30,9 @@ export function getCountryCentroid(
 
 export function nagerToMapEvents(
   holidays: NagerHoliday[],
-  centroid: [number, number],
+  _centroid: [number, number],
   countryName?: string,
+  lang: AppLanguage = "en",
 ): MapEvent[] {
   return holidays.map((h, i) => ({
     id: `${h.source ?? "nager"}-${h.countryCode}-${h.date}-${i}`,
@@ -42,9 +45,8 @@ export function nagerToMapEvents(
     countryCode: h.countryCode,
     countryName,
     region: h.counties?.[0] ?? undefined,
-    lat: centroid[1] + (i % 5) * 0.15 - 0.3,
-    lng: centroid[0] + Math.floor(i / 5) * 0.15 - 0.3,
-    description: buildHolidayDescription(h, countryName),
+    holidayRegions: h.counties?.length ? h.counties : undefined,
+    description: buildHolidayDescription(h, countryName, lang),
     isGlobal: h.global,
   }));
 }
@@ -55,14 +57,19 @@ export function filterEvents(
   eventCategories: string[],
   nationalOnly: boolean,
   region?: string | null,
+  sportSubs?: SportSubcategory[],
+  countryCode?: string | null,
+  regionGeo?: FeatureCollection | null,
 ): MapEvent[] {
+  const allSportSubs =
+    !sportSubs ||
+    sportSubs.length === 0 ||
+    sportSubs.length >= ALL_SPORT_SUBCATEGORIES.length;
+
   return events.filter((e) => {
     if (region) {
-      const matchRegion =
-        e.region === region ||
-        e.city === region ||
-        (e.region && e.region.includes(region));
-      if (!matchRegion) return false;
+      const code = countryCode ?? e.countryCode;
+      if (!eventPassesRegionFilter(e, region, code, regionGeo)) return false;
     }
 
     if (e.category === "holiday") {
@@ -74,6 +81,14 @@ export function filterEvents(
       return holidayTypes.includes(primary);
     }
     if (eventCategories.length === 0) return false;
+    if (e.category === "sports") {
+      if (!eventCategories.includes("sports")) return false;
+      if (!allSportSubs) {
+        const sub = e.sportSub ?? "other";
+        return sportSubs!.includes(sub);
+      }
+      return true;
+    }
     if (eventCategories.includes(e.category)) return true;
     return e.category === "other" || e.category === "community";
   });
@@ -212,7 +227,7 @@ export function generateIcs(events: MapEvent[], countryName: string): string {
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Sunny Atlas//Global Holidays//EN",
+    "PRODID:-//FestSeekr//Global Events//EN",
     `X-WR-CALNAME:${countryName} Holidays`,
   ];
 

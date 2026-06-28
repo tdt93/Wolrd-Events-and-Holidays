@@ -15,9 +15,20 @@ export type EventCategory =
   | "community"
   | "other";
 
+export type SportSubcategory =
+  | "football"
+  | "basketball"
+  | "american-football"
+  | "hockey"
+  | "baseball"
+  | "tennis"
+  | "motorsport"
+  | "other";
+
 export type EventSource =
   | "nager"
   | "calendarific"
+  | "festivo"
   | "ticketmaster"
   | "eventbrite"
   | "seatgeek"
@@ -31,7 +42,7 @@ export interface NagerHoliday {
   global: boolean;
   counties: string[] | null;
   types: HolidayType[];
-  source?: "nager" | "calendarific";
+  source?: "nager" | "calendarific" | "festivo";
 }
 
 export interface MapEvent {
@@ -42,6 +53,7 @@ export interface MapEvent {
   startDate: string;
   endDate?: string;
   category: EventCategory;
+  sportSub?: SportSubcategory;
   holidayTypes?: HolidayType[];
   countryCode: string;
   city?: string;
@@ -50,11 +62,20 @@ export interface MapEvent {
   lat?: number;
   lng?: number;
   url?: string;
+  imageUrl?: string;
   description?: string;
   isGlobal?: boolean;
   isLongWeekend?: boolean;
   region?: string;
+  /** ISO/subdivision codes from holiday APIs (e.g. Festivo `IT-MILAN`, `US-CA`). */
+  holidayRegions?: string[];
   countryName?: string;
+  /** 0–100 interest score from ticket APIs + heuristics. */
+  interestScore?: number;
+  /** High-interest ticket events (top ~12%). */
+  featured?: boolean;
+  /** Raw popularity from SeatGeek when available. */
+  popularity?: number;
 }
 
 export interface CountryMeta {
@@ -76,6 +97,8 @@ export type DatePreset =
   | "this-year"
   | "custom";
 
+export type AppUrlPanel = "events" | "filters" | "settings" | "about";
+
 export interface AppUrlState {
   country?: string;
   from?: string;
@@ -84,4 +107,7 @@ export interface AppUrlState {
   ecat?: EventCategory[];
   globe?: boolean;
   nationalOnly?: boolean;
+  region?: string;
+  panel?: AppUrlPanel;
+  event?: string;
 }

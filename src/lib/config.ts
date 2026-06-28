@@ -1,8 +1,8 @@
-export const SITE_NAME = "Sunny Atlas";
+export const SITE_NAME = "FestSeekr";
 export const REPO_URL =
   import.meta.env.VITE_REPO_URL ??
   "https://github.com/tdt93/Wolrd-Events-and-Holidays";
 
-export const DISCLAIMER = `Sunny Atlas is a hobby project built for travelers and curious explorers. It maps public holidays and ticketed events worldwide to help you plan trips around local celebrations, festivals, and sports.
+export const DISCLAIMER = `FestSeekr helps travelers and curious explorers discover global festivals, holidays, and ticketed events on an interactive map.
 
-Data comes from free public APIs (Nager.Date, Ticketmaster, and others). Always verify dates and venues before booking travel.`;
+Data comes from public APIs (Nager.Date, Ticketmaster, SeatGeek, and others). Always verify dates and venues before booking travel.`;

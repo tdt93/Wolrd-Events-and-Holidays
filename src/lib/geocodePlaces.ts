@@ -1,4 +1,11 @@
 import type { MapEvent } from "../types/event";
+import {
+  buildGeocodeQuery,
+  hasTrustedCoords,
+  hasValidCoords,
+  humanizeRegion,
+  spreadCoords,
+} from "./eventGeo";
 
 const geoCache = new Map<string, [number, number]>();
 
@@ -45,76 +52,8 @@ const CAPITALS: Record<string, [number, number]> = {
   MY: [101.6869, 3.139],
 };
 
-const US_STATE_NAMES: Record<string, string> = {
-  AL: "Alabama",
-  AK: "Alaska",
-  AZ: "Arizona",
-  AR: "Arkansas",
-  CA: "California",
-  CO: "Colorado",
-  CT: "Connecticut",
-  DE: "Delaware",
-  FL: "Florida",
-  GA: "Georgia",
-  HI: "Hawaii",
-  ID: "Idaho",
-  IL: "Illinois",
-  IN: "Indiana",
-  IA: "Iowa",
-  KS: "Kansas",
-  KY: "Kentucky",
-  LA: "Louisiana",
-  ME: "Maine",
-  MD: "Maryland",
-  MA: "Massachusetts",
-  MI: "Michigan",
-  MN: "Minnesota",
-  MS: "Mississippi",
-  MO: "Missouri",
-  MT: "Montana",
-  NE: "Nebraska",
-  NV: "Nevada",
-  NH: "New Hampshire",
-  NJ: "New Jersey",
-  NM: "New Mexico",
-  NY: "New York",
-  NC: "North Carolina",
-  ND: "North Dakota",
-  OH: "Ohio",
-  OK: "Oklahoma",
-  OR: "Oregon",
-  PA: "Pennsylvania",
-  RI: "Rhode Island",
-  SC: "South Carolina",
-  SD: "South Dakota",
-  TN: "Tennessee",
-  TX: "Texas",
-  UT: "Utah",
-  VT: "Vermont",
-  VA: "Virginia",
-  WA: "Washington",
-  WV: "West Virginia",
-  WI: "Wisconsin",
-  WY: "Wyoming",
-  DC: "District of Columbia",
-};
+export { humanizeRegion };
 
-function humanizeRegion(region: string, countryCode: string): string {
-  const cc = countryCode.toUpperCase();
-  const usMatch = region.match(/^US-([A-Z]{2})$/i);
-  if (cc === "US" && usMatch) {
-    return US_STATE_NAMES[usMatch[1].toUpperCase()] ?? region;
-  }
-
-  const isoMatch = region.match(/^[A-Z]{2}-(.+)$/i);
-  if (isoMatch) {
-    return isoMatch[1].replace(/_/g, " ");
-  }
-
-  return region;
-}
-
-const BULK_GEOCODE_THRESHOLD = 25;
 const NOMINATIM_TIMEOUT_MS = 5000;
 
 async function nominatimSearch(
@@ -147,34 +86,33 @@ async function nominatimSearch(
   }
 }
 
-function fastPlaceEvents(
+const GEOCODE_QUERY_LIMIT = 24;
+
+async function geocodeQueries(
   events: MapEvent[],
   countryCode: string,
-  fallback: [number, number],
-): MapEvent[] {
-  const base = CAPITALS[countryCode] ?? fallback;
-  const cityBases = new Map<string, [number, number]>();
-  let cityIdx = 0;
+  countryName: string | undefined,
+): Promise<Map<string, [number, number]>> {
+  const out = new Map<string, [number, number]>();
+  const queries = new Set<string>();
 
-  return events.map((e, i) => {
-    if (e.lat != null && e.lng != null) return e;
+  for (const event of events) {
+    const q = buildGeocodeQuery(event, countryCode, countryName);
+    if (q) queries.add(q);
+  }
 
-    let coords: [number, number];
-    if (e.city) {
-      let cityBase = cityBases.get(e.city);
-      if (!cityBase) {
-        cityBase = jitter(base, cityIdx);
-        cityBases.set(e.city, cityBase);
-        cityIdx += 1;
-      }
-      coords = jitter(cityBase, i);
-    } else {
-      coords = jitter(base, i);
+  let n = 0;
+  for (const q of queries) {
+    if (n >= GEOCODE_QUERY_LIMIT) break;
+    const coords = await nominatimSearch(q, countryCode);
+    if (coords) out.set(q, coords);
+    n += 1;
+    if (n % 3 === 0) {
+      await new Promise((r) => setTimeout(r, 150));
     }
+  }
 
-    const [lng, lat] = coords;
-    return { ...e, lng, lat };
-  });
+  return out;
 }
 
 export async function placeEventsOnMap(
@@ -183,61 +121,37 @@ export async function placeEventsOnMap(
   countryName: string | undefined,
   fallback: [number, number],
 ): Promise<MapEvent[]> {
-  if (events.length >= BULK_GEOCODE_THRESHOLD) {
-    return fastPlaceEvents(events, countryCode, fallback);
-  }
+  const needsGeocode = events.filter((e) => !hasValidCoords(e));
+  const queryCoords = await geocodeQueries(needsGeocode, countryCode, countryName);
+  const fallbackBase = CAPITALS[countryCode] ?? fallback;
+  let fallbackIdx = 0;
 
-  const needsPlacement = events.filter(
-    (e) => e.lat == null || e.lng == null,
-  );
-  const cityCache = new Map<string, [number, number]>();
-  const uniqueCities = [
-    ...new Set(
-      needsPlacement.map((e) => e.city).filter((c): c is string => Boolean(c)),
-    ),
-  ];
-
-  let throttle = 0;
-  for (const city of uniqueCities) {
-    const coords = await nominatimSearch(
-      `${city}, ${countryName ?? countryCode}`,
-      countryCode,
-    );
-    if (coords) cityCache.set(city, coords);
-    throttle += 1;
-    if (throttle % 3 === 0) {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-
-  const placed: MapEvent[] = [];
-  let i = 0;
-  for (const e of events) {
-    if (e.lat != null && e.lng != null) {
-      placed.push(e);
-      continue;
+  return events.map((event, index) => {
+    if (hasTrustedCoords(event)) {
+      return { ...event, lng: event.lng!, lat: event.lat! };
     }
 
-    let base: [number, number] | null = null;
-    if (e.city && cityCache.has(e.city)) {
-      base = cityCache.get(e.city)!;
-    } else if (e.region) {
-      const regionLabel = humanizeRegion(e.region, countryCode);
-      base = await nominatimSearch(
-        `${regionLabel}, ${countryName ?? countryCode}`,
-        countryCode,
-      );
+    if (hasValidCoords(event)) {
+      const [lng, lat] = spreadCoords([event.lng!, event.lat!], index, true);
+      return { ...event, lng, lat };
     }
 
-    if (!base) {
-      base = CAPITALS[countryCode] ?? fallback;
+    const query = buildGeocodeQuery(event, countryCode, countryName);
+    const base =
+      (query && queryCoords.get(query)) ??
+      (event.category === "holiday" && event.isGlobal !== false
+        ? fallbackBase
+        : null);
+
+    if (base) {
+      const [lng, lat] = spreadCoords(base, index, Boolean(query && queryCoords.get(query)));
+      return { ...event, lng, lat };
     }
 
-    const [lng, lat] = jitter(base, i);
-    placed.push({ ...e, lng, lat });
-    i += 1;
-  }
-  return placed;
+    const [lng, lat] = spreadCoords(fallbackBase, fallbackIdx);
+    fallbackIdx += 1;
+    return { ...event, lng, lat };
+  });
 }
 
 export async function resolveEventCoords(
@@ -245,30 +159,29 @@ export async function resolveEventCoords(
   countryName: string | undefined,
   region: string | undefined,
   city: string | undefined,
+  venue: string | undefined,
   fallback: [number, number],
   index: number,
 ): Promise<[number, number]> {
-  if (city) {
-    const q = `${city}, ${countryName ?? countryCode}`;
+  const stub: MapEvent = {
+    id: "stub",
+    source: "nager",
+    title: "",
+    startDate: "",
+    category: "other",
+    countryCode,
+    city,
+    region,
+    venue,
+  };
+  const q = buildGeocodeQuery(stub, countryCode, countryName);
+  if (q) {
     const coords = await nominatimSearch(q, countryCode);
-    if (coords) return jitter(coords, index);
-  }
-
-  if (region) {
-    const regionLabel = humanizeRegion(region, countryCode);
-    const coords = await nominatimSearch(
-      `${regionLabel}, ${countryName ?? countryCode}`,
-      countryCode,
-    );
-    if (coords) return jitter(coords, index);
+    if (coords) return spreadCoords(coords, index, true);
   }
 
   const capital = CAPITALS[countryCode];
-  if (capital) return jitter(capital, index);
+  if (capital) return spreadCoords(capital, index);
 
-  return jitter(fallback, index);
-}
-
-function jitter([lng, lat]: [number, number], i: number): [number, number] {
-  return [lng + (i % 7) * 0.08 - 0.24, lat + Math.floor(i / 7) * 0.06 - 0.18];
+  return spreadCoords(fallback, index);
 }

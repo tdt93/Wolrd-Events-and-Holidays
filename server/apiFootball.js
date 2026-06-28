@@ -273,6 +273,7 @@ function mapFixture(fixture, countryCode, getName, displayYear, apiSeason) {
     title: `${home} vs ${away}`,
     startDate,
     category: "sports",
+    sportSub: "football",
     countryCode,
     countryName: getName(countryCode, "en"),
     city: venue?.city ?? undefined,
