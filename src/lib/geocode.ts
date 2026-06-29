@@ -1,9 +1,14 @@
+import countries from "i18n-iso-countries";
+import en from "i18n-iso-countries/langs/en.json";
 import type { Feature, FeatureCollection, Point } from "geojson";
 import type { AppLanguage } from "../hooks/useSettings";
 import type { MapEvent, NagerHoliday, SportSubcategory } from "../types/event";
 import { getPrimaryHolidayType, ALL_SPORT_SUBCATEGORIES } from "./categories";
 import { buildHolidayDescription } from "./descriptions";
 import { eventPassesRegionFilter } from "./regions";
+import { iso3ToIso2, resolveCountryCode } from "./iso";
+
+countries.registerLocale(en);
 
 const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
   US: [-98.5, 39.8],
@@ -27,6 +32,36 @@ export function getCountryCentroid(
 ): [number, number] {
   if (lng != null && lat != null) return [lng, lat];
   return COUNTRY_CENTROIDS[code] ?? [0, 20];
+}
+
+/** Parse ISO2 from a Nominatim reverse-geocode JSON body. */
+export function countryCodeFromNominatim(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const body = data as {
+    address?: Record<string, string>;
+    error?: string;
+  };
+  if (body.error) return null;
+
+  const address = body.address;
+  if (!address) return null;
+
+  const fromField = resolveCountryCode(
+    address.country_code ?? address.country_code_iso3166_1_alpha2,
+  );
+  if (fromField) return fromField;
+
+  const iso3 = address["ISO3166-1:alpha3"];
+  if (iso3) {
+    const fromIso3 = iso3ToIso2(iso3);
+    if (fromIso3) return fromIso3;
+  }
+
+  const countryName = address.country?.trim();
+  if (!countryName) return null;
+
+  const alpha2 = countries.getAlpha2Code(countryName, "en");
+  return alpha2 ? alpha2.toUpperCase() : null;
 }
 
 export function nagerToMapEvents(

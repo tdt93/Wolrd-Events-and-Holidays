@@ -3,15 +3,20 @@ const NOMINATIM_HEADERS = {
   "Accept-Language": "en",
 };
 
-export async function searchGeocode(q, countryCode) {
+export async function searchGeocode(q, countryCode, options = {}) {
   if (!q) return [];
 
+  const limit = Math.min(10, Math.max(1, Number(options.limit) || 1));
   const params = new URLSearchParams({
     q,
-    countrycodes: countryCode.toLowerCase(),
     format: "json",
-    limit: "1",
+    limit: String(limit),
+    addressdetails: "1",
   });
+
+  if (countryCode) {
+    params.set("countrycodes", countryCode.toLowerCase());
+  }
 
   const geoRes = await fetch(
     `https://nominatim.openstreetmap.org/search?${params}`,
@@ -30,6 +35,8 @@ export async function reverseGeocode(lat, lon) {
     lat,
     lon,
     format: "json",
+    addressdetails: "1",
+    zoom: "10",
   });
 
   const geoRes = await fetch(

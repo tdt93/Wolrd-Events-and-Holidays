@@ -23,6 +23,7 @@ interface DatePresetsProps {
   to: string;
   onCustomRange: (from: string, to: string) => void;
   language: AppLanguage;
+  embedded?: boolean;
 }
 
 export function DatePresets({
@@ -32,19 +33,10 @@ export function DatePresets({
   to,
   onCustomRange,
   language,
+  embedded = false,
 }: DatePresetsProps) {
-  return (
-    <section className="filter-card">
-      <div className="filter-card__head">
-        <span className="filter-card__icon" aria-hidden="true">
-          📅
-        </span>
-        <div>
-          <h3 className="filter-card__title">{t("dateRange", language)}</h3>
-          <p className="filter-card__hint">{t("customDates", language)}</p>
-        </div>
-      </div>
-
+  const body = (
+    <>
       <div className="chip-grid chip-grid--presets">
         {PRESET_KEYS.map((p) => {
           const isActive = active === p.id;
@@ -81,6 +73,25 @@ export function DatePresets({
           onChange={(iso) => onCustomRange(from, iso)}
         />
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return <div className="filter-accordion__content">{body}</div>;
+  }
+
+  return (
+    <section className="filter-card">
+      <div className="filter-card__head">
+        <span className="filter-card__icon" aria-hidden="true">
+          📅
+        </span>
+        <div>
+          <h3 className="filter-card__title">{t("dateRange", language)}</h3>
+          <p className="filter-card__hint">{t("customDates", language)}</p>
+        </div>
+      </div>
+      {body}
     </section>
   );
 }

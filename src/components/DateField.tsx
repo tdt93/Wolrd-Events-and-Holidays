@@ -1,6 +1,3 @@
-import { useEffect, useState } from "react";
-import { displayToIso, isoToDisplay } from "../lib/dateFormat";
-
 interface DateFieldProps {
   label: string;
   value: string;
@@ -8,39 +5,17 @@ interface DateFieldProps {
 }
 
 export function DateField({ label, value, onChange }: DateFieldProps) {
-  const [text, setText] = useState(() => isoToDisplay(value));
-
-  useEffect(() => {
-    setText(isoToDisplay(value));
-  }, [value]);
-
-  const commit = () => {
-    const iso = displayToIso(text);
-    if (iso) {
-      onChange(iso);
-      setText(isoToDisplay(iso));
-      return;
-    }
-    setText(isoToDisplay(value));
-  };
-
   return (
-    <label className="date-field">
+    <label className="date-field date-field--doodle">
       <span className="date-field__label">{label}</span>
       <input
-        type="text"
-        inputMode="numeric"
-        className="date-field__input"
-        placeholder="DD/MM/YYYY"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
+        type="date"
+        className="date-field__input date-field__input--doodle"
+        value={value}
+        onChange={(e) => {
+          if (e.target.value) onChange(e.target.value);
         }}
         aria-label={label}
-        autoComplete="off"
-        spellCheck={false}
       />
     </label>
   );

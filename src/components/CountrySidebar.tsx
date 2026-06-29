@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { MapEvent, SportSubcategory } from "../types/event";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import type { MapEvent, SportSubcategory, DatePreset, EventCategory, HolidayType } from "../types/event";
 import type { AppLanguage } from "../hooks/useSettings";
 import {
   downloadIcs,
@@ -22,9 +22,27 @@ import {
   tf,
 } from "../lib/locale";
 import { eventAltTitle, eventPrimaryTitle } from "../lib/eventDisplay";
-import type { HolidayType } from "../types/event";
+import { EventFiltersPanel, IconEventFilters } from "./EventFiltersPanel";
 
 const EVENT_PAGE_SIZE = 30;
+
+function SidebarFiltersSection({
+  open,
+  children,
+}: {
+  open: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`sidebar-filters-panel-wrap ${open ? "sidebar-filters-panel-wrap--open" : ""}`}
+    >
+      <div className="sidebar-filters-panel-inner">
+        <div className="sidebar-filters-panel">{children}</div>
+      </div>
+    </div>
+  );
+}
 
 interface CountrySidebarProps {
   countryName: string | null;
@@ -41,6 +59,31 @@ interface CountrySidebarProps {
   tripMode: boolean;
   tripFrom?: string;
   tripTo?: string;
+  filtersOpen: boolean;
+  onFiltersToggle: () => void;
+  datePreset: DatePreset;
+  onDatePresetChange: (preset: DatePreset) => void;
+  filterFrom: string;
+  filterTo: string;
+  onCustomRange: (from: string, to: string) => void;
+  selectedHolidays: HolidayType[];
+  onHolidayChange: (types: HolidayType[]) => void;
+  selectedEvents: EventCategory[];
+  onEventChange: (cats: EventCategory[]) => void;
+  selectedSportSubs: SportSubcategory[];
+  onSportSubChange: (subs: SportSubcategory[]) => void;
+  nationalOnly: boolean;
+  onNationalOnlyChange: (v: boolean) => void;
+  longWeekendOnly: boolean;
+  onLongWeekendOnlyChange: (v: boolean) => void;
+  onClearFilters: () => void;
+  regionNames: string[];
+  selectedRegion: string | null;
+  onRegionChange: (region: string | null) => void;
+  regionsLoading: boolean;
+  watchlist: string[];
+  countriesList: { countryCode: string; name: string }[];
+  onOpenCountry: (code: string) => void;
   language: AppLanguage;
 }
 
@@ -104,6 +147,31 @@ export function CountrySidebar({
   tripMode,
   tripFrom,
   tripTo,
+  filtersOpen,
+  onFiltersToggle,
+  datePreset,
+  onDatePresetChange,
+  filterFrom,
+  filterTo,
+  onCustomRange,
+  selectedHolidays,
+  onHolidayChange,
+  selectedEvents,
+  onEventChange,
+  selectedSportSubs,
+  onSportSubChange,
+  nationalOnly,
+  onNationalOnlyChange,
+  longWeekendOnly,
+  onLongWeekendOnlyChange,
+  onClearFilters,
+  regionNames,
+  selectedRegion,
+  onRegionChange,
+  regionsLoading,
+  watchlist,
+  countriesList,
+  onOpenCountry,
   language,
 }: CountrySidebarProps) {
   const [visibleCount, setVisibleCount] = useState(EVENT_PAGE_SIZE);
@@ -166,6 +234,11 @@ export function CountrySidebar({
     onExpandedEventChange(expandedEventId === id ? null : id);
   };
 
+  const showTripBanner = Boolean(
+    countryName && tripMode && tripFrom && tripTo,
+  );
+  const showFilterBanner = Boolean(countryName && !filtersOpen);
+
   return (
     <div className="country-sidebar">
       {countryName && (
@@ -188,7 +261,47 @@ export function CountrySidebar({
             >
               {isWatched ? `★ ${t("watchingBtn", language)}` : `☆ ${t("watch", language)}`}
             </button>
+            <button
+              type="button"
+              className={`btn-secondary sidebar-filters-btn ${filtersOpen ? "sidebar-filters-btn--open" : ""}`}
+              onClick={onFiltersToggle}
+              aria-expanded={filtersOpen}
+              aria-label={t("eventFilters", language)}
+            >
+              <IconEventFilters />
+              <span>{t("eventFilters", language)}</span>
+            </button>
           </div>
+
+          <SidebarFiltersSection open={filtersOpen}>
+            <EventFiltersPanel
+              datePreset={datePreset}
+              onDatePresetChange={onDatePresetChange}
+              from={filterFrom}
+              to={filterTo}
+              onCustomRange={onCustomRange}
+              selectedHolidays={selectedHolidays}
+              onHolidayChange={onHolidayChange}
+              selectedEvents={selectedEvents}
+              onEventChange={onEventChange}
+              selectedSportSubs={selectedSportSubs}
+              onSportSubChange={onSportSubChange}
+              nationalOnly={nationalOnly}
+              onNationalOnlyChange={onNationalOnlyChange}
+              longWeekendOnly={longWeekendOnly}
+              onLongWeekendOnlyChange={onLongWeekendOnlyChange}
+              onClearAll={onClearFilters}
+              showRegionPicker={Boolean(countryCode)}
+              regionNames={regionNames}
+              selectedRegion={selectedRegion}
+              onRegionChange={onRegionChange}
+              regionsLoading={regionsLoading}
+              watchlist={watchlist}
+              countriesList={countriesList}
+              onOpenCountry={onOpenCountry}
+              language={language}
+            />
+          </SidebarFiltersSection>
         </div>
       )}
 
@@ -199,9 +312,19 @@ export function CountrySidebar({
         </div>
       )}
 
-      {tripMode && tripFrom && tripTo && (
-        <div className="trip-banner">
-          {tf("tripModeBanner", language, { from: tripFrom, to: tripTo })}
+      {(showTripBanner || showFilterBanner) && (
+        <div className="trip-banner" role="status">
+          {showTripBanner && (
+            <p className="trip-banner__line">
+              {tf("tripModeEventsNote", language, {
+                from: tripFrom!,
+                to: tripTo!,
+              })}
+            </p>
+          )}
+          {showFilterBanner && (
+            <p className="trip-banner__line">{t("filterHint", language)}</p>
+          )}
         </div>
       )}
 
@@ -252,7 +375,7 @@ export function CountrySidebar({
               onClick={handleExport}
               disabled={events.length === 0}
               aria-label={t("exportIcs", language)}
-              data-tooltip={t("exportIcs", language)}
+              data-tooltip={t("exportIcsTip", language)}
             >
               <IconExport />
             </button>

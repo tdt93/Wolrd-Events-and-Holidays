@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { AppLanguage } from "../hooks/useSettings";
 import { t } from "../lib/locale";
 import { SiteLogo } from "./SiteLogo";
@@ -9,7 +10,23 @@ interface TopBarProps {
   onNearMe: () => void;
   locating: boolean;
   language: AppLanguage;
+  searchListboxId?: string;
+  searchExpanded?: boolean;
   children?: React.ReactNode;
+}
+
+function IconSearch() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="2.2" />
+      <path
+        d="M16 16l4.5 4.5"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
 }
 
 export function TopBar({
@@ -18,8 +35,25 @@ export function TopBar({
   onNearMe,
   locating,
   language,
+  searchListboxId,
+  searchExpanded = false,
   children,
 }: TopBarProps) {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [searchOpen]);
+
+  useEffect(() => {
+    if (search.trim()) setSearchOpen(true);
+  }, [search]);
+
   return (
     <header className="top-bar">
       <div className="logo">
@@ -29,13 +63,27 @@ export function TopBar({
           <span className="logo-tagline">{t("siteTagline", language)}</span>
         </div>
       </div>
-      <div className="search-wrap">
+      <button
+        type="button"
+        className={`icon-btn top-bar__search-toggle ${searchOpen ? "top-bar__search-toggle--open" : ""}`}
+        onClick={() => setSearchOpen((open) => !open)}
+        aria-expanded={searchOpen}
+        aria-label={t("searchPlaceholder", language)}
+      >
+        <IconSearch />
+      </button>
+      <div className={`search-wrap ${searchOpen ? "search-wrap--open" : ""}`}>
         <input
+          ref={searchInputRef}
           type="search"
-          placeholder={t("searchCountries", language)}
+          role="combobox"
+          placeholder={t("searchPlaceholder", language)}
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          aria-label={t("searchCountries", language)}
+          aria-label={t("searchPlaceholder", language)}
+          aria-expanded={searchExpanded}
+          aria-controls={searchListboxId}
+          aria-autocomplete="list"
         />
       </div>
       <button
@@ -49,7 +97,7 @@ export function TopBar({
         ) : (
           <>
             <IconDoodleNearMe />
-            <span>{t("nearMe", language)}</span>
+            <span className="near-me-chip__label">{t("nearMe", language)}</span>
           </>
         )}
       </button>

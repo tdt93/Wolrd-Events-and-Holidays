@@ -51,6 +51,20 @@ export function IconFilter() {
   );
 }
 
+export function IconTrip() {
+  return (
+    <DoodleFrame>
+      <SketchAccent d="M7.2 8.4h9.6v9.2H7.2z" />
+      <path
+        d="M7.5 8.8h9c.5 0 .9.4.9.9v8.4c0 .5-.4.9-.9.9h-9c-.5 0-.9-.4-.9-.9V9.7c0-.5.4-.9.9-.9z"
+        fill="rgba(255,255,255,0.45)"
+      />
+      <path d="M9.2 7.2h5.6M10.8 7.2v1.6M13.2 7.2v1.6" />
+      <path d="M9.4 12.2h5.2M9.4 15h3.4" />
+    </DoodleFrame>
+  );
+}
+
 export function IconList() {
   return (
     <DoodleFrame>

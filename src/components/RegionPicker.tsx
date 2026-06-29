@@ -7,6 +7,7 @@ interface RegionPickerProps {
   onChange: (region: string | null) => void;
   language: AppLanguage;
   loading?: boolean;
+  embedded?: boolean;
 }
 
 export function RegionPicker({
@@ -15,12 +16,12 @@ export function RegionPicker({
   onChange,
   language,
   loading,
+  embedded = false,
 }: RegionPickerProps) {
   if (loading || regions.length === 0) return null;
 
-  return (
-    <div className="region-picker filter-card">
-      <h3 className="filter-card__title">{t("region", language)}</h3>
+  const body = (
+    <>
       <p className="filter-card__hint">{t("regionMapHint", language)}</p>
       <div className="chip-grid">
         <button
@@ -41,6 +42,17 @@ export function RegionPicker({
           </button>
         ))}
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return <div className="filter-accordion__content">{body}</div>;
+  }
+
+  return (
+    <div className="region-picker filter-card">
+      <h3 className="filter-card__title">{t("region", language)}</h3>
+      {body}
     </div>
   );
 }

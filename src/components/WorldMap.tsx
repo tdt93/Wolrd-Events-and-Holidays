@@ -1027,7 +1027,7 @@ export function WorldMap({
   }, [selectedRegion, updateRegionPaint]);
 
   useEffect(() => {
-    if (!selectedCountry?.bbox || selectedRegion) return;
+    if (!selectedCountry?.code || selectedRegion) return;
     const map = mapRef.current;
     if (!map || !map.loaded()) return;
     if (lastFitCountryRef.current === selectedCountry.code) return;
@@ -1035,19 +1035,33 @@ export function WorldMap({
     lastFitCountryRef.current = selectedCountry.code;
 
     safeMapOp(map, (m) => {
-      m.fitBounds(
-        [
-          [selectedCountry.bbox![0], selectedCountry.bbox![1]],
-          [selectedCountry.bbox![2], selectedCountry.bbox![3]],
-        ],
-        {
-          padding: 48,
-          duration: 420,
-          maxZoom: fitMaxZoom(selectedCountry.bbox!),
-        },
-      );
+      if (selectedCountry.bbox) {
+        m.fitBounds(
+          [
+            [selectedCountry.bbox[0], selectedCountry.bbox[1]],
+            [selectedCountry.bbox[2], selectedCountry.bbox[3]],
+          ],
+          {
+            padding: 48,
+            duration: 420,
+            maxZoom: fitMaxZoom(selectedCountry.bbox),
+          },
+        );
+        return;
+      }
+
+      m.flyTo({
+        center: selectedCountry.centroid,
+        zoom: 5,
+        duration: 420,
+      });
     });
-  }, [selectedCountry?.code, selectedCountry?.bbox, selectedRegion]);
+  }, [
+    selectedCountry?.code,
+    selectedCountry?.bbox,
+    selectedCountry?.centroid,
+    selectedRegion,
+  ]);
 
   useEffect(() => {
     if (!selectedCountry?.code) {

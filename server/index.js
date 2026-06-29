@@ -964,9 +964,10 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/geocode/search", async (req, res) => {
   const q = String(req.query.q || "");
-  const countryCode = String(req.query.countryCode || "").toLowerCase();
+  const countryCode = String(req.query.countryCode || "");
+  const limit = Math.min(10, Math.max(1, Number(req.query.limit) || 1));
   try {
-    res.json(await searchGeocode(q, countryCode));
+    res.json(await searchGeocode(q, countryCode, { limit }));
   } catch (err) {
     console.error(err);
     res.json([]);

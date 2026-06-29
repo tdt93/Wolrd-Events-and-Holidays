@@ -29,6 +29,8 @@ interface CategoryFiltersProps {
   onLongWeekendOnlyChange: (v: boolean) => void;
   onClearAll: () => void;
   language: AppLanguage;
+  section?: "holidays" | "events";
+  embedded?: boolean;
 }
 
 export function CategoryFilters({
@@ -44,6 +46,8 @@ export function CategoryFilters({
   onLongWeekendOnlyChange,
   onClearAll,
   language,
+  section,
+  embedded = false,
 }: CategoryFiltersProps) {
   const toggleHoliday = (id: HolidayType) => {
     if (selectedHolidays.includes(id)) {
@@ -86,25 +90,11 @@ export function CategoryFilters({
     !nationalOnly &&
     !longWeekendOnly;
 
-  return (
-    <section className="filter-card filter-card--categories">
-      <div className="filter-card__head filter-card__head--split">
-        <div className="filter-card__head-main">
-          <span className="filter-card__icon" aria-hidden="true">
-            🎛️
-          </span>
-          <h3 className="filter-card__title">{t("holidays", language)}</h3>
-        </div>
-        <button
-          type="button"
-          className="clear-all-btn"
-          onClick={onClearAll}
-          disabled={isDefault}
-        >
-          {t("clearAll", language)}
-        </button>
-      </div>
+  const showHolidays = !section || section === "holidays";
+  const showEvents = !section || section === "events";
 
+  const holidayBlock = showHolidays ? (
+    <>
       <div className="chip-grid">
         {HOLIDAY_CATEGORIES.map((cat) => {
           const active = selectedHolidays.includes(cat.id);
@@ -131,7 +121,29 @@ export function CategoryFilters({
         })}
       </div>
 
-      <h4 className="filter-card__subtitle">{t("events", language)}</h4>
+      <div className="filter-toggle-list">
+        <label className="filter-toggle-row">
+          <span>{t("nationalOnly", language)}</span>
+          <input
+            type="checkbox"
+            checked={nationalOnly}
+            onChange={(e) => onNationalOnlyChange(e.target.checked)}
+          />
+        </label>
+        <label className="filter-toggle-row">
+          <span>{t("longWeekends", language)}</span>
+          <input
+            type="checkbox"
+            checked={longWeekendOnly}
+            onChange={(e) => onLongWeekendOnlyChange(e.target.checked)}
+          />
+        </label>
+      </div>
+    </>
+  ) : null;
+
+  const eventsBlock = showEvents ? (
+    <>
       <div className="chip-grid">
         {EVENT_CATEGORIES.map((cat) => {
           const active = selectedEvents.includes(cat.id);
@@ -188,25 +200,43 @@ export function CategoryFilters({
           </div>
         </>
       )}
+    </>
+  ) : null;
 
-      <div className="filter-toggle-list">
-        <label className="filter-toggle-row">
-          <span>{t("nationalOnly", language)}</span>
-          <input
-            type="checkbox"
-            checked={nationalOnly}
-            onChange={(e) => onNationalOnlyChange(e.target.checked)}
-          />
-        </label>
-        <label className="filter-toggle-row">
-          <span>{t("longWeekends", language)}</span>
-          <input
-            type="checkbox"
-            checked={longWeekendOnly}
-            onChange={(e) => onLongWeekendOnlyChange(e.target.checked)}
-          />
-        </label>
+  if (embedded) {
+    return (
+      <div className="filter-accordion__content">
+        {holidayBlock}
+        {eventsBlock}
       </div>
+    );
+  }
+
+  return (
+    <section className="filter-card filter-card--categories">
+      <div className="filter-card__head filter-card__head--split">
+        <div className="filter-card__head-main">
+          <span className="filter-card__icon" aria-hidden="true">
+            🎛️
+          </span>
+          <h3 className="filter-card__title">{t("holidays", language)}</h3>
+        </div>
+        <button
+          type="button"
+          className="clear-all-btn"
+          onClick={onClearAll}
+          disabled={isDefault}
+        >
+          {t("clearAll", language)}
+        </button>
+      </div>
+
+      {holidayBlock}
+
+      {showEvents && (
+        <h4 className="filter-card__subtitle">{t("events", language)}</h4>
+      )}
+      {eventsBlock}
     </section>
   );
 }

@@ -1,21 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WorldMap } from "./components/WorldMap";
 import { CountrySidebar } from "./components/CountrySidebar";
-import { CategoryFilters } from "./components/CategoryFilters";
 import { GlobeToggle } from "./components/GlobeToggle";
 import { TopBar } from "./components/TopBar";
-import { DatePresets } from "./components/DatePresets";
+import { SearchResultsPanel } from "./components/SearchResultsPanel";
 import { TripPlanner } from "./components/TripPlanner";
 import { BottomCardPanel } from "./components/BottomCardPanel";
 import { DockButton } from "./components/DockButton";
-import { RegionPicker } from "./components/RegionPicker";
 import {
-  IconFilter,
   IconHeatmap,
   IconGitHub,
   IconInfo,
   IconList,
   IconSettings,
+  IconTrip,
 } from "./components/DockIcons";
 import { useHolidays, useCountries, useCountryHeatmap } from "./hooks/useHolidays";
 import { useCountryRegions } from "./hooks/useCountryRegions";
@@ -31,12 +29,21 @@ import {
 } from "./lib/geocode";
 import { parseUrlState, writeUrlState, buildShareUrl } from "./lib/urlState";
 import { resolveCountrySelection } from "./lib/countrySelect";
+import { countryCodeFromNominatim } from "./lib/geocode";
 import { resolveCountryCode } from "./lib/iso";
 import { REPO_URL, SITE_VERSION } from "./lib/config";
 import { CountryFlag } from "./components/CountryFlag";
 import { useSettings } from "./hooks/useSettings";
 import { useSiteMeta } from "./hooks/useSiteMeta";
 import { usePanelShortcuts } from "./hooks/usePanelShortcuts";
+import { useGroupedSearch } from "./hooks/useGroupedSearch";
+import type {
+  SearchCityHit,
+  SearchCountryHit,
+  SearchEventHit,
+  SearchHolidayHit,
+} from "./lib/globalSearch";
+import { hasGroupedSearchResults } from "./lib/globalSearch";
 import {
   ALL_EVENT_CATEGORIES,
   ALL_HOLIDAY_TYPES,
@@ -46,6 +53,8 @@ import { countryNameInLang, LANGUAGE_OPTIONS, localizeCountryList, t, tf } from 
 import "./styles/global.css";
 
 type PanelId = "filters" | "events" | "settings" | "about" | null;
+
+const SEARCH_LISTBOX_ID = "global-search-results";
 
 function initialPanelFromUrl(
   panel: ReturnType<typeof parseUrlState>["panel"],
@@ -95,6 +104,7 @@ export default function App() {
   const [openPanel, setOpenPanel] = useState<PanelId>(
     initialPanelFromUrl(initial.panel, initial.country, initial.event),
   );
+  const [eventFiltersOpen, setEventFiltersOpen] = useState(false);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(
     initial.event ?? null,
   );
@@ -208,6 +218,12 @@ export default function App() {
   ]);
 
   const prevCountryRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!selected?.code) {
+      setEventFiltersOpen(false);
+    }
+  }, [selected?.code]);
 
   useEffect(() => {
     const code = selected?.code ?? null;
@@ -343,52 +359,83 @@ export default function App() {
     settings.language,
   ]);
 
-  const filteredEvents = useMemo(() => {
-    const rangeFrom = tripMode ? tripFrom : from;
-    const rangeTo = tripMode ? tripTo : to;
+  const buildFilteredEvents = useCallback(
+    (rangeFrom: string, rangeTo: string) => {
+      let merged: MapEvent[] = [
+        ...filterByDateRange(holidayEvents, rangeFrom, rangeTo),
+        ...filterByDateRange(ticketEvents, rangeFrom, rangeTo),
+      ];
 
-    let merged: MapEvent[] = [
-      ...filterByDateRange(holidayEvents, rangeFrom, rangeTo),
-      ...filterByDateRange(ticketEvents, rangeFrom, rangeTo),
-    ];
+      if (selected?.code) {
+        merged = merged.filter((e) => e.countryCode === selected.code);
+      }
 
-    if (selected?.code) {
-      merged = merged.filter((e) => e.countryCode === selected.code);
-    }
+      merged = filterEvents(
+        merged,
+        selectedTypes,
+        selectedEventCats,
+        nationalOnly,
+        selectedRegion,
+        selectedSportSubs,
+        selected?.code ?? null,
+        regionGeo,
+      );
 
-    merged = filterEvents(
-      merged,
+      if (longWeekendOnly) {
+        merged = merged.filter((e) => e.isLongWeekend);
+      }
+
+      return merged.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    },
+    [
+      holidayEvents,
+      ticketEvents,
       selectedTypes,
       selectedEventCats,
-      nationalOnly,
-      selectedRegion,
       selectedSportSubs,
-      selected?.code ?? null,
+      nationalOnly,
+      longWeekendOnly,
+      selectedRegion,
+      selected?.code,
       regionGeo,
-    );
+    ],
+  );
 
-    if (longWeekendOnly) {
-      merged = merged.filter((e) => e.isLongWeekend);
-    }
+  const filteredEvents = useMemo(
+    () =>
+      buildFilteredEvents(
+        tripMode ? tripFrom : from,
+        tripMode ? tripTo : to,
+      ),
+    [buildFilteredEvents, tripMode, tripFrom, tripTo, from, to],
+  );
 
-    return merged.sort((a, b) => a.startDate.localeCompare(b.startDate));
-  }, [
-    holidayEvents,
-    ticketEvents,
-    from,
-    to,
-    tripMode,
-    tripFrom,
-    tripTo,
-    selectedTypes,
-    selectedEventCats,
-    selectedSportSubs,
-    nationalOnly,
-    longWeekendOnly,
-    selectedRegion,
-    selected?.code,
-    regionGeo,
-  ]);
+  const dateRangeEventCount = useMemo(() => {
+    if (!selected?.code) return null;
+    return buildFilteredEvents(from, to).length;
+  }, [buildFilteredEvents, from, to, selected?.code]);
+
+  const searchableEvents = useMemo(() => {
+    if (!selected?.code) return [];
+    const seen = new Set<string>();
+    return [...holidayEvents, ...ticketEvents].filter((event) => {
+      if (event.countryCode !== selected.code) return false;
+      if (seen.has(event.id)) return false;
+      seen.add(event.id);
+      return true;
+    });
+  }, [holidayEvents, ticketEvents, selected?.code]);
+
+  const { results: groupedSearchResults, citiesLoading } = useGroupedSearch(
+    search,
+    localizedCountries,
+    searchableEvents,
+    settings.language,
+  );
+
+  const showSearchResults =
+    search.trim().length > 0 &&
+    (hasGroupedSearchResults(groupedSearchResults) || citiesLoading);
 
   useEffect(() => {
     const pending = pendingEventRef.current;
@@ -420,9 +467,34 @@ export default function App() {
     setTo(newTo);
   };
 
-  const handleOpenCountry = (code: string, name: string) => {
+  const handleTripEnabledChange = (enabled: boolean) => {
+    setTripMode(enabled);
+    if (enabled && (!tripFrom || !tripTo)) {
+      setTripFrom(from);
+      setTripTo(to);
+    }
+  };
+
+  const handleTripRangeChange = (tripStart: string, tripEnd: string) => {
+    setTripFrom(tripStart);
+    setTripTo(tripEnd);
+    setTripMode(true);
+  };
+
+  const handleOpenCountry = (
+    code: string,
+    coords?: { lng: number; lat: number },
+  ) => {
     markUserCountryChange();
-    selectCountry({ code, name, centroid: [0, 20] });
+    const resolved = resolveCountrySelection(
+      code,
+      localizedCountries,
+      settings.language,
+    );
+    if (coords) {
+      resolved.centroid = [coords.lng, coords.lat];
+    }
+    selectCountry(resolved);
     setOpenPanel("events");
   };
 
@@ -437,16 +509,12 @@ export default function App() {
             `/api/geocode/reverse?lat=${latitude}&lon=${longitude}`,
           );
           const data = await res.json();
-          const code = resolveCountryCode(
-            data.address?.country_code?.toUpperCase() ?? "",
-          );
+          if (!res.ok || data?.error) return;
+
+          const code = countryCodeFromNominatim(data);
           if (!code) return;
-          const name =
-            countryNameInLang(code, settings.language) ??
-            data.address?.country ??
-            localizedCountries.find((c) => c.countryCode === code)?.name ??
-            code;
-          handleOpenCountry(code, name);
+
+          handleOpenCountry(code, { lng: longitude, lat: latitude });
         } catch {
           /* ignore */
         } finally {
@@ -454,28 +522,43 @@ export default function App() {
         }
       },
       () => setLocating(false),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
     );
   };
 
-  const handleSearchSelect = (code: string) => {
-    const c = localizedCountries.find((x) => x.countryCode === code);
-    if (c) {
-      handleOpenCountry(c.countryCode, c.name);
-      setSearch("");
+  const handleSearchSelectCountry = (hit: SearchCountryHit) => {
+    handleOpenCountry(hit.countryCode);
+    setSearch("");
+  };
+
+  const handleSearchSelectCity = (hit: SearchCityHit) => {
+    handleOpenCountry(hit.countryCode, { lng: hit.lng, lat: hit.lat });
+    setSearch("");
+  };
+
+  const ensureDateIncludes = (date: string) => {
+    if (date < from) {
+      setDatePreset("custom");
+      setFrom(date);
+    }
+    if (date > to) {
+      setDatePreset("custom");
+      setTo(date);
     }
   };
 
-  const searchResults = useMemo(() => {
-    if (!search.trim()) return [];
-    const q = search.toLowerCase();
-    return localizedCountries
-      .filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.countryCode.toLowerCase().includes(q),
-      )
-      .slice(0, 8);
-  }, [search, localizedCountries]);
+  const handleSearchSelectEventLike = (
+    hit: SearchEventHit | SearchHolidayHit,
+  ) => {
+    if (selected?.code !== hit.countryCode) {
+      handleOpenCountry(hit.countryCode);
+    }
+    ensureDateIncludes(hit.startDate);
+    pendingEventRef.current = hit.eventId;
+    setExpandedEventId(hit.eventId);
+    setOpenPanel("events");
+    setSearch("");
+  };
 
   const handleSelectFromMap = (country: SelectedCountry) => {
     markUserCountryChange();
@@ -531,20 +614,20 @@ export default function App() {
           onNearMe={handleNearMe}
           locating={locating}
           language={settings.language}
+          searchListboxId={SEARCH_LISTBOX_ID}
+          searchExpanded={showSearchResults}
         />
-        {searchResults.length > 0 && (
-          <ul className="search-results search-results--float">
-            {searchResults.map((c) => (
-              <li key={c.countryCode}>
-                <button
-                  type="button"
-                  onClick={() => handleSearchSelect(c.countryCode)}
-                >
-                  {c.name} ({c.countryCode})
-                </button>
-              </li>
-            ))}
-          </ul>
+        {showSearchResults && (
+          <SearchResultsPanel
+            results={groupedSearchResults}
+            citiesLoading={citiesLoading}
+            language={settings.language}
+            listboxId={SEARCH_LISTBOX_ID}
+            onSelectCountry={handleSearchSelectCountry}
+            onSelectCity={handleSearchSelectCity}
+            onSelectEvent={handleSearchSelectEventLike}
+            onSelectHoliday={handleSearchSelectEventLike}
+          />
         )}
         {settings.showKeyboardHints && !openPanel && (
           <div className="keyboard-hints-wrap">
@@ -574,15 +657,35 @@ export default function App() {
             </button>
           </div>
         )}
+        <div className="float-header__map-tools">
+          <div className="float-globe">
+            <GlobeToggle
+              isGlobe={isGlobe}
+              onChange={setIsGlobe}
+              language={settings.language}
+            />
+          </div>
+          {selected && (
+            <div className="float-selection">
+              {selected.code && (
+                <CountryFlag
+                  code={selected.code}
+                  label={selectedDisplayName ?? selected.name}
+                  size={22}
+                />
+              )}
+              <span>{selectedDisplayName ?? selected.name}</span>
+              <button
+                type="button"
+                onClick={clearSelection}
+                aria-label={t("clearSelection", settings.language)}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+        </div>
       </header>
-
-      <div className="float-globe">
-        <GlobeToggle
-          isGlobe={isGlobe}
-          onChange={setIsGlobe}
-          language={settings.language}
-        />
-      </div>
 
       <div className="float-dock">
         <DockButton
@@ -604,7 +707,7 @@ export default function App() {
           shortcut="2"
           tone="sun"
         >
-          <IconFilter />
+          <IconTrip />
         </DockButton>
         <DockButton
           label={t("dockHeatmap", settings.language)}
@@ -636,22 +739,6 @@ export default function App() {
           <IconInfo />
         </DockButton>
       </div>
-
-      {selected && (
-        <div className="float-selection">
-          {selected.code && (
-            <CountryFlag
-              code={selected.code}
-              label={selectedDisplayName ?? selected.name}
-              size={22}
-            />
-          )}
-          <span>{selectedDisplayName ?? selected.name}</span>
-          <button type="button" onClick={clearSelection} aria-label={t("clearSelection", settings.language)}>
-            ✕
-          </button>
-        </div>
-      )}
 
       <div className="bottom-card-stack">
       <BottomCardPanel
@@ -698,40 +785,13 @@ export default function App() {
           tripMode={tripMode}
           tripFrom={tripFrom}
           tripTo={tripTo}
-          language={settings.language}
-        />
-      </BottomCardPanel>
-
-      <BottomCardPanel
-        open={openPanel === "filters"}
-        onToggle={() => togglePanel("filters")}
-        onClose={() => setOpenPanel(null)}
-        title={t("filtersDates", settings.language)}
-        closeLabel={t("close", settings.language)}
-        pullDownLabel={t("pullDownToClose", settings.language)}
-        stackIndex={1}
-        stackTotal={4}
-        tone="sun"
-        bodyClassName="slide-panel__body--filters"
-      >
-        <DatePresets
-          active={datePreset}
-          onChange={handlePreset}
-          from={from}
-          to={to}
+          filtersOpen={eventFiltersOpen}
+          onFiltersToggle={() => setEventFiltersOpen((open) => !open)}
+          datePreset={datePreset}
+          onDatePresetChange={handlePreset}
+          filterFrom={from}
+          filterTo={to}
           onCustomRange={handleCustomRange}
-          language={settings.language}
-        />
-        <TripPlanner
-          enabled={tripMode}
-          onEnabledChange={setTripMode}
-          tripFrom={tripFrom}
-          tripTo={tripTo}
-          onTripFromChange={setTripFrom}
-          onTripToChange={setTripTo}
-          language={settings.language}
-        />
-        <CategoryFilters
           selectedHolidays={selectedTypes}
           onHolidayChange={setSelectedTypes}
           selectedEvents={selectedEventCats}
@@ -742,40 +802,44 @@ export default function App() {
           onNationalOnlyChange={setNationalOnly}
           longWeekendOnly={longWeekendOnly}
           onLongWeekendOnlyChange={setLongWeekendOnly}
-          onClearAll={handleClearFilters}
+          onClearFilters={handleClearFilters}
+          regionNames={regionNames}
+          selectedRegion={selectedRegion}
+          onRegionChange={setSelectedRegion}
+          regionsLoading={regionsLoading}
+          watchlist={watchlist}
+          countriesList={localizedCountries}
+          onOpenCountry={(code) => handleOpenCountry(code)}
           language={settings.language}
         />
-        {selected && (
-          <RegionPicker
-            regions={regionNames}
-            selected={selectedRegion}
-            onChange={setSelectedRegion}
-            language={settings.language}
-            loading={regionsLoading}
-          />
-        )}
-        {watchlist.length > 0 && (
-          <div className="watchlist-inline filter-card">
-            <h3 className="filter-card__title">{t("watching", settings.language)}</h3>
-            <div className="chip-grid">
-              {watchlist.map((code) => {
-                const c = localizedCountries.find((x) => x.countryCode === code);
-                return (
-                  <button
-                    key={code}
-                    type="button"
-                    className="watch-chip"
-                    onClick={() =>
-                      c && handleOpenCountry(c.countryCode, c.name)
-                    }
-                  >
-                    {c?.name ?? code}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+      </BottomCardPanel>
+
+      <BottomCardPanel
+        open={openPanel === "filters"}
+        onToggle={() => togglePanel("filters")}
+        onClose={() => setOpenPanel(null)}
+        title={t("tripPlanner", settings.language)}
+        peekTitle={t("tripPlanner", settings.language)}
+        closeLabel={t("close", settings.language)}
+        pullDownLabel={t("pullDownToClose", settings.language)}
+        stackIndex={1}
+        stackTotal={4}
+        tone="sun"
+        bodyClassName="slide-panel__body--filters"
+      >
+        <TripPlanner
+          enabled={tripMode}
+          onEnabledChange={handleTripEnabledChange}
+          tripFrom={tripFrom}
+          tripTo={tripTo}
+          onTripFromChange={setTripFrom}
+          onTripToChange={setTripTo}
+          onTripRangeChange={handleTripRangeChange}
+          matchCount={tripMode ? filteredEvents.length : null}
+          totalInRangeCount={tripMode ? dateRangeEventCount : null}
+          countrySelected={Boolean(selected?.code)}
+          language={settings.language}
+        />
       </BottomCardPanel>
 
       <BottomCardPanel
