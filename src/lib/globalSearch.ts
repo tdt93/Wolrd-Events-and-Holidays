@@ -102,7 +102,7 @@ export function searchCountries(
     }));
 }
 
-function eventSearchText(event: MapEvent, language: AppLanguage): string {
+function eventSearchText(event: MapEvent): string {
   return [
     event.title,
     event.localTitle,
@@ -128,7 +128,7 @@ export function searchLoadedEvents(
   const holidayHits: SearchHolidayHit[] = [];
 
   for (const event of events) {
-    if (!matchesQuery(eventSearchText(event, language), q)) continue;
+    if (!matchesQuery(eventSearchText(event), q)) continue;
 
     const title = eventPrimaryTitle(event, language);
     const place = [event.city, event.region].filter(Boolean).join(", ");
