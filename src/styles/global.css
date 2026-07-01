@@ -2324,6 +2324,23 @@ select {
   min-width: 0;
 }
 
+.logo-link {
+  text-decoration: none;
+  color: inherit;
+  border-radius: 10px;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.logo-link:hover,
+.logo-link:focus-visible {
+  opacity: 0.88;
+  outline: none;
+}
+
+.logo-link:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-sky-bright);
+}
+
 .logo-text-wrap {
   display: flex;
   flex-direction: column;
@@ -3303,13 +3320,10 @@ select {
     padding: 8px 10px;
   }
 
-  .float-header .top-bar .logo {
+  .float-header .top-bar .logo,
+  .float-header .top-bar .logo-link {
     flex: 1;
     min-width: 0;
-  }
-
-  .float-header .top-bar .logo-tagline {
-    display: none;
   }
 
   .float-header .top-bar .search-wrap {

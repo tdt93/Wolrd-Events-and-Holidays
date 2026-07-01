@@ -56,13 +56,13 @@ export function TopBar({
 
   return (
     <header className="top-bar">
-      <div className="logo">
+      <a href="/" className="logo logo-link" aria-label={t("siteName", language)}>
         <SiteLogo size={36} className="logo-icon" />
         <div className="logo-text-wrap">
           <span className="logo-text">{t("siteName", language)}</span>
           <span className="logo-tagline">{t("siteTagline", language)}</span>
         </div>
-      </div>
+      </a>
       <button
         type="button"
         className={`icon-btn top-bar__search-toggle ${searchOpen ? "top-bar__search-toggle--open" : ""}`}
